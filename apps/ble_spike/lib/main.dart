@@ -144,8 +144,8 @@ class _BleSpikeHomeState extends State<BleSpikeHome> {
         includeDeviceName: true,
       );
       final advertiseSettings = AdvertiseSettings(
-        advertiseMode: AdvertiseMode.lowLatency,
-        txPowerLevel: AdvertiseTxPower.high,
+        advertiseMode: AdvertiseMode.advertiseModeBalanced,
+        txPowerLevel: AdvertiseTxPower.advertiseTxPowerMedium,
         connectable: true,
         timeout: 0,
       );

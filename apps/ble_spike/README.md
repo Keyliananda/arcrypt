@@ -1,16 +1,18 @@
 # ble_spike
 
-A new Flutter project.
+BLE spike app to validate BLE roles and platform limits for the MVP.
 
-## Getting Started
+## What it does
+- Central role: scan, connect, disconnect.
+- Peripheral role: advertising only (no GATT server).
 
-This project is a starting point for a Flutter application.
+## Run
+1) `flutter run` on real devices (Android + iOS preferred).
+2) Android: tap "Berechtigungen anfordern" and allow all BLE permissions.
+3) Android: tap "Advertise starten" (default Service UUID).
+4) iOS: tap "Scan starten" and try Connect/Disconnect.
+5) Log results in `docs/ble-spike-results.md`.
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Notes
+- `flutter_ble_peripheral` only advertises; Service/Char/Write/Notify are N/A.
+- For GATT testing, a native peripheral or another plugin is required.

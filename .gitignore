@@ -1,1 +1,23 @@
 docs/
+
+# Flutter app artifacts (any app under /apps)
+apps/**/.dart_tool/
+apps/**/.flutter-plugins
+apps/**/.flutter-plugins-dependencies
+apps/**/.pub-cache/
+apps/**/.pub/
+apps/**/build/
+apps/**/.idea/
+apps/**/*.iml
+apps/**/android/.gradle/
+apps/**/android/app/debug/
+apps/**/android/app/profile/
+apps/**/android/app/release/
+apps/**/ios/Flutter/.last_build_id
+apps/**/ios/Flutter/ephemeral/
+apps/**/ios/Pods/
+apps/**/ios/.symlinks/
+apps/**/macos/Flutter/ephemeral/
+apps/**/macos/Pods/
+apps/**/windows/flutter/ephemeral/
+apps/**/linux/flutter/ephemeral/
