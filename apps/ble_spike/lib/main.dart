@@ -101,11 +101,17 @@ class _BleSpikeHomeState extends State<BleSpikeHome> {
   }
 
   Future<void> _startScan() async {
+    final serviceUuid = _serviceUuidController.text.trim();
     setState(() {
       _scanResults = <ScanResult>[];
     });
-    _logLine('Scan gestartet (10s).');
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+    _logLine('Scan gestartet (30s) - Filter: $serviceUuid');
+    await FlutterBluePlus.startScan(
+      timeout: const Duration(seconds: 30),
+      withServices: serviceUuid.isNotEmpty
+          ? [Guid(serviceUuid)]
+          : [],
+    );
   }
 
   Future<void> _stopScan() async {
@@ -141,7 +147,7 @@ class _BleSpikeHomeState extends State<BleSpikeHome> {
     try {
       final advertiseData = AdvertiseData(
         serviceUuid: serviceUuid,
-        includeDeviceName: true,
+        includeDeviceName: false,
       );
       final advertiseSettings = AdvertiseSettings(
         advertiseMode: AdvertiseMode.advertiseModeBalanced,
