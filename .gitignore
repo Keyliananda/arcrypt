@@ -19,3 +19,5 @@ apps/**/macos/Flutter/ephemeral/
 apps/**/macos/Pods/
 apps/**/windows/flutter/ephemeral/
 apps/**/linux/flutter/ephemeral/
+# Ignore all docs
+docs/
