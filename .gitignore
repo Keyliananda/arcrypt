@@ -1,5 +1,3 @@
-docs/
-
 # Flutter app artifacts (any app under /apps)
 apps/**/.dart_tool/
 apps/**/.flutter-plugins
