@@ -26,3 +26,5 @@ docs/
 server/.env
 server/node_modules/
 server/data.sqlite
+server/secrets/
+server/secrets/*.p8
