@@ -28,8 +28,14 @@
 	<string>Benötigt für BLE-Scan und Verbindungen im Spike-Test.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Benötigt für BLE-Advertising im Spike-Test.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Benötigt für lokale BLE-Kommunikation.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Benötigt für BLE-Scan (nur falls iOS dies anfordert).</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ble._tcp</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

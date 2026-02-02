@@ -11,6 +11,11 @@ import 'chat/chat.dart';
 import 'transport/transport.dart';
 
 void main() {
+  // Configure flutter_blue_plus BEFORE any BLE access
+  // showPowerAlert: false prevents the automatic "Turn on Bluetooth" dialog
+  // which can cause issues if BLE is off
+  FlutterBluePlus.setOptions(showPowerAlert: false);
+  
   runApp(const BleSpikeApp());
 }
 
@@ -26,7 +31,137 @@ class BleSpikeApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: const BleChatHome(),
+      home: const BleSetupScreen(),
+    );
+  }
+}
+
+/// Initial screen that asks user to enable Bluetooth before proceeding
+class BleSetupScreen extends StatefulWidget {
+  const BleSetupScreen({super.key});
+
+  @override
+  State<BleSetupScreen> createState() => _BleSetupScreenState();
+}
+
+class _BleSetupScreenState extends State<BleSetupScreen> {
+  bool _checking = false;
+  String _status = '';
+
+  Future<void> _checkAndProceed() async {
+    setState(() {
+      _checking = true;
+      _status = 'Prüfe Bluetooth...';
+    });
+
+    try {
+      // Request permission first (iOS will show dialog)
+      if (Platform.isIOS) {
+        await Permission.bluetooth.request();
+      } else if (Platform.isAndroid) {
+        await [
+          Permission.bluetoothScan,
+          Permission.bluetoothConnect,
+          Permission.bluetoothAdvertise,
+          Permission.locationWhenInUse,
+        ].request();
+      }
+
+      // Now check adapter state
+      final state = await FlutterBluePlus.adapterState.first.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => BluetoothAdapterState.unknown,
+      );
+
+      if (state == BluetoothAdapterState.on) {
+        // Bluetooth is on, proceed to main screen
+        if (mounted) {
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const BleChatHome()),
+          );
+        }
+      } else if (state == BluetoothAdapterState.off) {
+        setState(() {
+          _checking = false;
+          _status = 'Bluetooth ist ausgeschaltet.\nBitte aktiviere Bluetooth in den Einstellungen.';
+        });
+      } else if (state == BluetoothAdapterState.unauthorized) {
+        setState(() {
+          _checking = false;
+          _status = 'Bluetooth-Berechtigung nicht erteilt.\nBitte erlaube Bluetooth in den Einstellungen.';
+        });
+      } else {
+        setState(() {
+          _checking = false;
+          _status = 'Bluetooth-Status: $state';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _checking = false;
+        _status = 'Fehler: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.bluetooth,
+                size: 80,
+                color: Colors.teal,
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'BLE Chat Spike',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Diese App benötigt Bluetooth für die Kommunikation.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.grey),
+              ),
+              const SizedBox(height: 32),
+              if (_status.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: _status.contains('ausgeschaltet') || _status.contains('Fehler')
+                        ? Colors.orange.shade50
+                        : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _status,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+              if (_checking)
+                const CircularProgressIndicator()
+              else
+                ElevatedButton.icon(
+                  onPressed: _checkAndProceed,
+                  icon: const Icon(Icons.bluetooth_searching),
+                  label: Text(_status.isEmpty ? 'Bluetooth aktivieren' : 'Erneut prüfen'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -52,7 +187,8 @@ final Uint8List kTestSessionId = Uint8List.fromList([0xDE, 0xAD, 0xBE, 0xEF]);
 const String kChatServiceUuid = 'F00D0001-1212-EFDE-1523-785FEABCD123';
 
 class _BleChatHomeState extends State<BleChatHome> {
-  final FlutterBlePeripheral _peripheral = FlutterBlePeripheral();
+  // DON'T initialize BLE peripheral here - it triggers CoreBluetooth!
+  FlutterBlePeripheral? _peripheral;
   final TextEditingController _messageController = TextEditingController();
 
   final List<String> _log = <String>[];
@@ -70,6 +206,7 @@ class _BleChatHomeState extends State<BleChatHome> {
   StreamSubscription<bool>? _isScanningSub;
   StreamSubscription<List<int>>? _notifySub;
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
+  StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
 
   // Transport layer
   late _BleTransportLink _transportLink;
@@ -80,21 +217,101 @@ class _BleChatHomeState extends State<BleChatHome> {
   late ChatSession _chatSession;
   bool _isInitiator = false; // Set when connecting/accepting
 
+  // Bluetooth state - start with "not initialized" state
+  bool _bleInitialized = false;
+  bool _bluetoothReady = false;
+  String _bluetoothStatus = 'Bluetooth nicht initialisiert';
+
   @override
   void initState() {
     super.initState();
     _initTransport();
+    // DON'T initialize BLE here - wait for user action
+  }
 
-    _scanResultsSub = FlutterBluePlus.scanResults.listen((results) {
-      setState(() {
-        _scanResults = results;
-      });
+  /// Initialize BLE subsystem - only call after user explicitly requests it
+  Future<void> _initializeBle() async {
+    if (_bleInitialized) return;
+
+    setState(() {
+      _bluetoothStatus = 'Initialisiere Bluetooth...';
     });
-    _isScanningSub = FlutterBluePlus.isScanning.listen((value) {
-      setState(() {
-        _isScanning = value;
+
+    try {
+      // Set up listeners BEFORE checking state
+      _scanResultsSub = FlutterBluePlus.scanResults.listen((results) {
+        setState(() {
+          _scanResults = results;
+        });
       });
+
+      _isScanningSub = FlutterBluePlus.isScanning.listen((value) {
+        setState(() {
+          _isScanning = value;
+        });
+      });
+
+      _adapterStateSub = FlutterBluePlus.adapterState.listen((state) {
+        _updateBluetoothState(state);
+      });
+
+      // Now check current state - this triggers the iOS permission dialog
+      final state = await FlutterBluePlus.adapterState.first;
+      _updateBluetoothState(state);
+
+      _bleInitialized = true;
+    } catch (e) {
+      setState(() {
+        _bluetoothStatus = 'Bluetooth-Fehler: $e';
+        _bluetoothReady = false;
+      });
+      _logLine('BLE Init Fehler: $e');
+    }
+  }
+
+  void _updateBluetoothState(BluetoothAdapterState state) {
+    setState(() {
+      switch (state) {
+        case BluetoothAdapterState.on:
+          _bluetoothReady = true;
+          _bluetoothStatus = 'Bluetooth bereit';
+          _logLine('Bluetooth ist eingeschaltet');
+        case BluetoothAdapterState.off:
+          _bluetoothReady = false;
+          _bluetoothStatus = 'Bluetooth ist ausgeschaltet';
+          _logLine('Bluetooth ist AUS - bitte einschalten');
+        case BluetoothAdapterState.unauthorized:
+          _bluetoothReady = false;
+          _bluetoothStatus = 'Bluetooth-Berechtigung fehlt';
+          _logLine('Bluetooth-Berechtigung nicht erteilt');
+        case BluetoothAdapterState.unavailable:
+          _bluetoothReady = false;
+          _bluetoothStatus = 'Bluetooth nicht verfügbar';
+          _logLine('Bluetooth nicht verfügbar auf diesem Gerät');
+        default:
+          _bluetoothReady = false;
+          _bluetoothStatus = 'Bluetooth-Status unbekannt';
+      }
     });
+  }
+
+  void _showBluetoothDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Bluetooth einschalten'),
+        content: const Text(
+          'Bitte aktiviere Bluetooth in den Einstellungen, um die App zu nutzen.\n\n'
+          'Gehe zu: Einstellungen → Bluetooth',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _initTransport() {
@@ -140,6 +357,7 @@ class _BleChatHomeState extends State<BleChatHome> {
     _isScanningSub?.cancel();
     _notifySub?.cancel();
     _connectionSub?.cancel();
+    _adapterStateSub?.cancel();
     _transportMessageSub?.cancel();
     _messageController.dispose();
     super.dispose();
@@ -162,22 +380,35 @@ class _BleChatHomeState extends State<BleChatHome> {
   }
 
   Future<void> _requestPermissions() async {
-    if (!Platform.isAndroid) {
-      _logLine('iOS: Permissions automatisch.');
-      return;
+    if (Platform.isAndroid) {
+      final statuses = await <Permission>[
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.bluetoothAdvertise,
+        Permission.locationWhenInUse,
+      ].request();
+      _logLine('Permissions: ${statuses.values.map((s) => s.name).join(', ')}');
+    } else if (Platform.isIOS) {
+      // On iOS, requesting Bluetooth permission happens automatically when
+      // we access Bluetooth. But we can explicitly check/request it:
+      final status = await Permission.bluetooth.request();
+      _logLine('Bluetooth Permission: ${status.name}');
     }
 
-    final statuses = await <Permission>[
-      Permission.bluetoothScan,
-      Permission.bluetoothConnect,
-      Permission.bluetoothAdvertise,
-      Permission.locationWhenInUse,
-    ].request();
-
-    _logLine('Permissions: ${statuses.values.map((s) => s.name).join(', ')}');
+    // Initialize BLE after permissions granted
+    await _initializeBle();
   }
 
   Future<void> _startScan() async {
+    // Make sure BLE is initialized first
+    if (!_bleInitialized) {
+      await _initializeBle();
+    }
+    if (!_bluetoothReady) {
+      _logLine('Bluetooth nicht bereit');
+      return;
+    }
+
     setState(() {
       _scanResults = <ScanResult>[];
     });
@@ -304,9 +535,21 @@ class _BleChatHomeState extends State<BleChatHome> {
   }
 
   Future<void> _startAdvertising() async {
+    // Make sure BLE is initialized first
+    if (!_bleInitialized) {
+      await _initializeBle();
+    }
+    if (!_bluetoothReady) {
+      _logLine('Bluetooth nicht bereit');
+      return;
+    }
+
     _setRole(ChatRole.responder); // We are the peripheral, waiting for connection
 
     try {
+      // Lazy init peripheral
+      _peripheral ??= FlutterBlePeripheral();
+
       final advertiseData = AdvertiseData(
         serviceUuid: kChatServiceUuid,
         includeDeviceName: false,
@@ -317,7 +560,7 @@ class _BleChatHomeState extends State<BleChatHome> {
         connectable: true,
         timeout: 0,
       );
-      await _peripheral.start(
+      await _peripheral!.start(
         advertiseData: advertiseData,
         advertiseSettings: advertiseSettings,
       );
@@ -332,7 +575,7 @@ class _BleChatHomeState extends State<BleChatHome> {
 
   Future<void> _stopAdvertising() async {
     try {
-      await _peripheral.stop();
+      await _peripheral?.stop();
       setState(() {
         _isAdvertising = false;
       });
@@ -360,6 +603,44 @@ class _BleChatHomeState extends State<BleChatHome> {
       ),
       body: Column(
         children: [
+          // Bluetooth status bar
+          if (!_bluetoothReady)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              color: Colors.red.shade100,
+              child: Row(
+                children: [
+                  const Icon(Icons.bluetooth_disabled, size: 20, color: Colors.red),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _bluetoothStatus,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                  if (_bluetoothStatus.contains('ausgeschaltet'))
+                    TextButton(
+                      onPressed: () async {
+                        // On iOS, we can't programmatically open BT settings,
+                        // but we can prompt the user
+                        if (Platform.isIOS) {
+                          _showBluetoothDialog();
+                        } else {
+                          // Android: Try to turn on Bluetooth
+                          await FlutterBluePlus.turnOn();
+                        }
+                      },
+                      child: const Text('Einschalten'),
+                    )
+                  else
+                    TextButton(
+                      onPressed: _requestPermissions,
+                      child: const Text('Berechtigung'),
+                    ),
+                ],
+              ),
+            ),
+
           // Connection status bar
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
