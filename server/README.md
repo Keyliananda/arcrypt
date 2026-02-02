@@ -54,6 +54,7 @@ node --test
 
 ## Environment variables
 
+- `SERVER_ENABLED` (default: true) - Enable/disable server via watchdog
 - `PORT` (default: 3000)
 - `MAX_BODY_BYTES` (default: 8192)
 - `HMAC_SECRET` (required for `/v1/wake`)
