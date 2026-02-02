@@ -1,0 +1,14 @@
+{
+  "name": "silent-wake-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "sqlite3": "^5.1.7"
+  }
+}

@@ -21,3 +21,8 @@ apps/**/windows/flutter/ephemeral/
 apps/**/linux/flutter/ephemeral/
 # Ignore all docs
 docs/
+
+# Server env
+server/.env
+server/node_modules/
+server/data.sqlite
