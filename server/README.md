@@ -65,6 +65,13 @@ node --test
 - `DB_DRIVER` (`memory` or `sqlite`, `mysql` optional)
 - `DB_FILENAME` (SQLite filename)
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` (MySQL optional)
+- `APNS_ENABLED` (default: true)
+- `APNS_ENV` (`sandbox` or `prod`)
+- `APNS_KEY_ID` (Key ID from Apple)
+- `APNS_TEAM_ID` (Team ID, not the email)
+- `APNS_TOPIC` (Bundle Identifier)
+- `APNS_KEY_PATH` (path to AuthKey_*.p8 on the server)
+- `APNS_TIMEOUT_MS` (default: 5000)
 
 ## Endpoints (POST only)
 
@@ -109,6 +116,10 @@ hex(HMAC_SHA256(HMAC_SECRET, token + ":" + ts))
 ```
 
 Requests older/newer than `HMAC_MAX_SKEW_SEC` are rejected.
+
+If APNs config is present, `/v1/wake` attempts a silent push immediately and
+adds an `apns` field in the response with the result. If not configured, it
+only queues the wake request.
 
 ## Rate limiting
 

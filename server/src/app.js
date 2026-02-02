@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
+const { sendSilentPush, isApnsConfigured } = require("./apns");
 
 const MAX_TOKEN_LENGTH = 512;
 const MAX_TOPIC_LENGTH = 255;
@@ -181,7 +182,45 @@ function createApp({ store, config, now = Date.now }) {
 
     const createdAt = new Date(nowMs);
     const wakeId = await store.createWakeRequest(tokenRecord.id, createdAt);
-    return jsonResponse(202, { ok: true, wake_id: wakeId, status: "queued" });
+
+    let apnsInfo = null;
+    const apnsConfig = config.apns || {};
+    if (isApnsConfigured(apnsConfig)) {
+      const result = await sendSilentPush({
+        token: tokenRecord.token,
+        topic: apnsConfig.topic,
+        env: apnsConfig.env || tokenRecord.env,
+        keyId: apnsConfig.keyId,
+        teamId: apnsConfig.teamId,
+        keyPath: apnsConfig.keyPath,
+        timeoutMs: apnsConfig.timeoutMs
+      });
+      if (result.ok) {
+        apnsInfo = {
+          status: "sent",
+          apns_id: result.apnsId,
+          http_status: result.status
+        };
+      } else {
+        apnsInfo = {
+          status: "failed",
+          reason: result.reason || result.error,
+          http_status: result.status || 0
+        };
+      }
+    } else if (apnsConfig.enabled) {
+      apnsInfo = { status: "skipped", reason: "not_configured" };
+    }
+
+    const responsePayload = {
+      ok: true,
+      wake_id: wakeId,
+      status: apnsInfo && apnsInfo.status === "sent" ? "sent" : "queued"
+    };
+    if (apnsInfo) {
+      responsePayload.apns = apnsInfo;
+    }
+    return jsonResponse(202, responsePayload);
   }
 
   async function handle({ method, path, headers, body, ip }) {
