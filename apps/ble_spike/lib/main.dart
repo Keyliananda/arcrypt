@@ -7,6 +7,7 @@ import 'package:flutter_ble_peripheral/flutter_ble_peripheral.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import 'apns_debug_screen.dart';
 import 'chat/chat.dart';
 import 'transport/transport.dart';
 
@@ -593,6 +594,15 @@ class _BleChatHomeState extends State<BleChatHome> {
       appBar: AppBar(
         title: Text('BLE Chat${_isInitiator ? " (Initiator)" : " (Responder)"}'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bug_report),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const ApnsDebugScreen()),
+              );
+            },
+            tooltip: 'APNs Debug',
+          ),
           if (isConnected)
             IconButton(
               icon: const Icon(Icons.close),

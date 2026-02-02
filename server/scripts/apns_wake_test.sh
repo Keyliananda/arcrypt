@@ -35,7 +35,7 @@ if [[ -z "${HMAC_SECRET:-}" ]]; then
 fi
 
 TS="$(date +%s)"
-PROOF="$(node -e "const crypto=require('crypto'); const secret=process.env.HMAC_SECRET; const token=process.argv[1]; const ts=process.argv[2]; process.stdout.write(crypto.createHmac('sha256', secret).update(`${token}:${ts}`).digest('hex'))" "$TOKEN" "$TS")"
+PROOF="$(HMAC_SECRET="$HMAC_SECRET" node -e "const crypto=require('crypto'); const secret=process.env.HMAC_SECRET; const token=process.argv[1]; const ts=process.argv[2]; process.stdout.write(crypto.createHmac('sha256', secret).update(\`\${token}:\${ts}\`).digest('hex'))" "$TOKEN" "$TS")"
 
 REGISTER_PAYLOAD="$(printf '{"token":"%s","topic":"%s","env":"%s"}' "$TOKEN" "$TOPIC" "$ENVIRONMENT")"
 WAKE_PAYLOAD="$(printf '{"token":"%s","ts":%s,"proof":"%s"}' "$TOKEN" "$TS" "$PROOF")"
