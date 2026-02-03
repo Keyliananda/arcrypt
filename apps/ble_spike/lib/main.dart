@@ -1,112 +1,149 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_ble_peripheral/flutter_ble_peripheral.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import 'apns_debug_screen.dart';
+import 'ble/ble.dart';
 import 'chat/chat.dart';
 import 'transport/transport.dart';
 
 void main() {
-  // Configure flutter_blue_plus BEFORE any BLE access
-  // showPowerAlert: false prevents the automatic "Turn on Bluetooth" dialog
-  // which can cause issues if BLE is off
-  FlutterBluePlus.setOptions(showPowerAlert: false);
-  
-  runApp(const BleSpikeApp());
+  runApp(const PrsmChatApp());
 }
 
-class BleSpikeApp extends StatelessWidget {
-  const BleSpikeApp({super.key});
+class PrsmChatApp extends StatelessWidget {
+  const PrsmChatApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BLE Chat Spike',
+      title: 'PRSM Chat',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal),
         useMaterial3: true,
       ),
-      home: const BleSetupScreen(),
+      home: const RoleSelectionScreen(),
     );
   }
 }
 
-/// Initial screen that asks user to enable Bluetooth before proceeding
-class BleSetupScreen extends StatefulWidget {
-  const BleSetupScreen({super.key});
+/// Initial screen to select role: Peripheral (GATT Server) or Central (GATT Client)
+class RoleSelectionScreen extends StatefulWidget {
+  const RoleSelectionScreen({super.key});
 
   @override
-  State<BleSetupScreen> createState() => _BleSetupScreenState();
+  State<RoleSelectionScreen> createState() => _RoleSelectionScreenState();
 }
 
-class _BleSetupScreenState extends State<BleSetupScreen> {
-  bool _checking = false;
+class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   String _status = '';
+  bool _checking = false;
+  
+  // Keep a single instance of CentralManager
+  final CentralManager _centralManager = CentralManager();
+  StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _stateSub;
 
-  Future<void> _checkAndProceed() async {
-    setState(() {
-      _checking = true;
-      _status = 'Prüfe Bluetooth...';
+  @override
+  void initState() {
+    super.initState();
+    _setupBleStateListener();
+    _checkPermissions();
+  }
+
+  @override
+  void dispose() {
+    _stateSub?.cancel();
+    super.dispose();
+  }
+
+  void _setupBleStateListener() {
+    // Listen for BLE state changes (important for iOS!)
+    _stateSub = _centralManager.stateChanged.listen((event) {
+      _updateBleState(event.state);
     });
+  }
 
-    try {
-      // Request permission first (iOS will show dialog)
-      if (Platform.isIOS) {
-        await Permission.bluetooth.request();
-      } else if (Platform.isAndroid) {
-        await [
-          Permission.bluetoothScan,
-          Permission.bluetoothConnect,
-          Permission.bluetoothAdvertise,
-          Permission.locationWhenInUse,
-        ].request();
-      }
-
-      // Now check adapter state
-      final state = await FlutterBluePlus.adapterState.first.timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => BluetoothAdapterState.unknown,
-      );
-
-      if (state == BluetoothAdapterState.on) {
-        // Bluetooth is on, proceed to main screen
-        if (mounted) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const BleChatHome()),
-          );
-        }
-      } else if (state == BluetoothAdapterState.off) {
-        setState(() {
-          _checking = false;
-          _status = 'Bluetooth ist ausgeschaltet.\nBitte aktiviere Bluetooth in den Einstellungen.';
-        });
-      } else if (state == BluetoothAdapterState.unauthorized) {
-        setState(() {
-          _checking = false;
-          _status = 'Bluetooth-Berechtigung nicht erteilt.\nBitte erlaube Bluetooth in den Einstellungen.';
-        });
-      } else {
-        setState(() {
-          _checking = false;
-          _status = 'Bluetooth-Status: $state';
-        });
-      }
-    } catch (e) {
+  void _updateBleState(BluetoothLowEnergyState state) {
+    if (!mounted) return;
+    
+    if (state == BluetoothLowEnergyState.poweredOn) {
       setState(() {
         _checking = false;
-        _status = 'Fehler: $e';
+        _status = 'Bereit';
+      });
+    } else if (state == BluetoothLowEnergyState.unauthorized) {
+      setState(() {
+        _checking = false;
+        _status = 'Bluetooth-Berechtigung fehlt.\nBitte in den Einstellungen erlauben.';
+      });
+    } else if (state == BluetoothLowEnergyState.poweredOff) {
+      setState(() {
+        _checking = false;
+        _status = 'Bluetooth ist aus. Bitte einschalten.';
+      });
+    } else {
+      setState(() {
+        _checking = false;
+        _status = 'Bluetooth-Status: $state';
       });
     }
   }
 
+  Future<void> _checkPermissions() async {
+    setState(() {
+      _checking = true;
+      _status = 'Prüfe Berechtigungen...';
+    });
+
+    // Request permissions (Android needs explicit requests, iOS triggers on first BLE access)
+    final permissions = await [
+      Permission.bluetoothScan,
+      Permission.bluetoothConnect,
+      Permission.bluetoothAdvertise,
+      Permission.locationWhenInUse,
+    ].request();
+
+    final allGranted = permissions.values.every(
+      (status) => status.isGranted || status.isLimited,
+    );
+
+    if (!allGranted) {
+      setState(() {
+        _checking = false;
+        _status = 'Bluetooth-Berechtigungen fehlen.\nBitte in den Einstellungen erlauben.';
+      });
+      return;
+    }
+
+    // Check current BLE state
+    // On iOS, accessing .state may trigger the permission dialog
+    final currentState = _centralManager.state;
+    _updateBleState(currentState);
+    
+    // If state is unknown, wait a moment for iOS to update
+    if (currentState == BluetoothLowEnergyState.unknown) {
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) {
+        _updateBleState(_centralManager.state);
+      }
+    }
+  }
+
+  void _selectRole(ChatRole role) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(role: role),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isReady = _status == 'Bereit';
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -114,51 +151,98 @@ class _BleSetupScreenState extends State<BleSetupScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.bluetooth,
-                size: 80,
-                color: Colors.teal,
-              ),
+              const Icon(Icons.bluetooth, size: 80, color: Colors.teal),
               const SizedBox(height: 24),
               const Text(
-                'BLE Chat Spike',
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                'PRSM Chat',
+                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
               const Text(
-                'Diese App benötigt Bluetooth für die Kommunikation.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 16, color: Colors.grey),
+                'Ende-zu-Ende verschlüsselter BLE-Chat',
+                style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
               const SizedBox(height: 32),
-              if (_status.isNotEmpty) ...[
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: _status.contains('ausgeschaltet') || _status.contains('Fehler')
-                        ? Colors.orange.shade50
-                        : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    _status,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
-                const SizedBox(height: 24),
-              ],
+
+              // Status
               if (_checking)
                 const CircularProgressIndicator()
               else
-                ElevatedButton.icon(
-                  onPressed: _checkAndProceed,
-                  icon: const Icon(Icons.bluetooth_searching),
-                  label: Text(_status.isEmpty ? 'Bluetooth aktivieren' : 'Erneut prüfen'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: isReady ? Colors.green.shade50 : Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isReady ? Icons.check_circle : Icons.warning,
+                        color: isReady ? Colors.green : Colors.orange,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(_status),
+                    ],
                   ),
                 ),
+
+              const SizedBox(height: 48),
+
+              // Role selection
+              if (isReady) ...[
+                const Text(
+                  'Wähle deine Rolle:',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                ),
+                const SizedBox(height: 16),
+                
+                // Peripheral button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _selectRole(ChatRole.responder),
+                    icon: const Icon(Icons.broadcast_on_personal),
+                    label: const Text('Peripheral (Sichtbar machen)'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.all(20),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Werde sichtbar und warte auf Verbindungen',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+
+                const SizedBox(height: 24),
+
+                // Central button
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => _selectRole(ChatRole.initiator),
+                    icon: const Icon(Icons.search),
+                    label: const Text('Central (Suchen & Verbinden)'),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.all(20),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Suche nach sichtbaren Geräten und verbinde dich',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+
+              if (!isReady && !_checking) ...[
+                const SizedBox(height: 24),
+                ElevatedButton(
+                  onPressed: _checkPermissions,
+                  child: const Text('Erneut prüfen'),
+                ),
+              ],
             ],
           ),
         ),
@@ -167,11 +251,14 @@ class _BleSetupScreenState extends State<BleSetupScreen> {
   }
 }
 
-class BleChatHome extends StatefulWidget {
-  const BleChatHome({super.key});
+/// Main chat screen that handles both Peripheral and Central roles
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key, required this.role});
+
+  final ChatRole role;
 
   @override
-  State<BleChatHome> createState() => _BleChatHomeState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
 /// Shared test key (32 bytes) - same on all devices for this spike
@@ -185,183 +272,261 @@ final Uint8List kTestMasterKey = Uint8List.fromList([
 /// Shared session ID (4 bytes)
 final Uint8List kTestSessionId = Uint8List.fromList([0xDE, 0xAD, 0xBE, 0xEF]);
 
-const String kChatServiceUuid = 'F00D0001-1212-EFDE-1523-785FEABCD123';
-
-class _BleChatHomeState extends State<BleChatHome> {
-  // DON'T initialize BLE peripheral here - it triggers CoreBluetooth!
-  FlutterBlePeripheral? _peripheral;
+class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
+  final List<String> _log = [];
+  final List<ChatMessage> _messages = [];
 
-  final List<String> _log = <String>[];
-  final List<_ChatBubble> _messages = <_ChatBubble>[];
+  // BLE components
+  GattServer? _gattServer;
+  GattClient? _gattClient;
 
-  List<ScanResult> _scanResults = <ScanResult>[];
-  bool _isScanning = false;
-  bool _isAdvertising = false;
-
-  BluetoothDevice? _connectedDevice;
-  BluetoothCharacteristic? _writeChar;
-  BluetoothCharacteristic? _notifyChar;
-
-  StreamSubscription<List<ScanResult>>? _scanResultsSub;
-  StreamSubscription<bool>? _isScanningSub;
-  StreamSubscription<List<int>>? _notifySub;
-  StreamSubscription<BluetoothConnectionState>? _connectionSub;
-  StreamSubscription<BluetoothAdapterState>? _adapterStateSub;
-
-  // Transport layer
-  late _BleTransportLink _transportLink;
-  late TransportEndpoint _transport;
-  StreamSubscription<Uint8List>? _transportMessageSub;
+  // Transport
+  TransportEndpoint? _transport;
 
   // Chat session
   late ChatSession _chatSession;
-  bool _isInitiator = false; // Set when connecting/accepting
 
-  // Bluetooth state - start with "not initialized" state
-  bool _bleInitialized = false;
-  bool _bluetoothReady = false;
-  String _bluetoothStatus = 'Bluetooth nicht initialisiert';
+  // State
+  bool _isConnected = false;
+  bool _isScanning = false;
+  bool _isAdvertising = false;
+  List<DiscoveredPeripheral> _discoveredDevices = [];
+
+  // Subscriptions
+  StreamSubscription<Uint8List>? _inboundSub;
+  StreamSubscription<bool>? _connectionSub;
+  StreamSubscription<DiscoveredPeripheral>? _discoverySub;
+  StreamSubscription<Uint8List>? _transportMessageSub;
 
   @override
   void initState() {
     super.initState();
-    _initTransport();
-    // DON'T initialize BLE here - wait for user action
+    _initChatSession();
+    _initBle();
   }
 
-  /// Initialize BLE subsystem - only call after user explicitly requests it
-  Future<void> _initializeBle() async {
-    if (_bleInitialized) return;
+  void _initChatSession() {
+    _chatSession = ChatSession(
+      contactId: 'test-peer',
+      sessionId: kTestSessionId,
+      keyId: 'test-key',
+      masterKey: kTestMasterKey,
+      role: widget.role,
+    );
+  }
 
-    setState(() {
-      _bluetoothStatus = 'Initialisiere Bluetooth...';
-    });
+  Future<void> _initBle() async {
+    _logLine('Initialisiere BLE als ${widget.role.name}...');
 
     try {
-      // Set up listeners BEFORE checking state
-      _scanResultsSub = FlutterBluePlus.scanResults.listen((results) {
-        setState(() {
-          _scanResults = results;
+      if (widget.role == ChatRole.responder) {
+        // Peripheral role: Start GATT Server
+        _gattServer = GattServer(logger: _logLine);
+        await _gattServer!.start();
+        
+        _connectionSub = _gattServer!.connectionState.listen((connected) {
+          setState(() => _isConnected = connected);
+          if (connected) {
+            _setupTransport(_gattServer!);
+          }
         });
-      });
 
-      _isScanningSub = FlutterBluePlus.isScanning.listen((value) {
-        setState(() {
-          _isScanning = value;
+        _logLine('GATT Server bereit');
+      } else {
+        // Central role: Initialize GATT Client
+        _gattClient = GattClient(logger: _logLine);
+        await _gattClient!.initialize();
+        
+        _connectionSub = _gattClient!.connectionState.listen((connected) {
+          setState(() => _isConnected = connected);
+          if (connected) {
+            _setupTransport(_gattClient!);
+          } else {
+            _transport?.resetSession();
+          }
         });
-      });
 
-      _adapterStateSub = FlutterBluePlus.adapterState.listen((state) {
-        _updateBluetoothState(state);
-      });
+        _discoverySub = _gattClient!.discovered.listen((device) {
+          setState(() {
+            // Avoid duplicates
+            final exists = _discoveredDevices.any(
+              (d) => d.peripheral.uuid == device.peripheral.uuid,
+            );
+            if (!exists) {
+              _discoveredDevices.add(device);
+            }
+          });
+        });
 
-      // Now check current state - this triggers the iOS permission dialog
-      final state = await FlutterBluePlus.adapterState.first;
-      _updateBluetoothState(state);
-
-      _bleInitialized = true;
+        _logLine('GATT Client bereit');
+      }
     } catch (e) {
-      setState(() {
-        _bluetoothStatus = 'Bluetooth-Fehler: $e';
-        _bluetoothReady = false;
-      });
       _logLine('BLE Init Fehler: $e');
     }
   }
 
-  void _updateBluetoothState(BluetoothAdapterState state) {
-    setState(() {
-      switch (state) {
-        case BluetoothAdapterState.on:
-          _bluetoothReady = true;
-          _bluetoothStatus = 'Bluetooth bereit';
-          _logLine('Bluetooth ist eingeschaltet');
-        case BluetoothAdapterState.off:
-          _bluetoothReady = false;
-          _bluetoothStatus = 'Bluetooth ist ausgeschaltet';
-          _logLine('Bluetooth ist AUS - bitte einschalten');
-        case BluetoothAdapterState.unauthorized:
-          _bluetoothReady = false;
-          _bluetoothStatus = 'Bluetooth-Berechtigung fehlt';
-          _logLine('Bluetooth-Berechtigung nicht erteilt');
-        case BluetoothAdapterState.unavailable:
-          _bluetoothReady = false;
-          _bluetoothStatus = 'Bluetooth nicht verfügbar';
-          _logLine('Bluetooth nicht verfügbar auf diesem Gerät');
-        default:
-          _bluetoothReady = false;
-          _bluetoothStatus = 'Bluetooth-Status unbekannt';
-      }
-    });
-  }
+  void _setupTransport(TransportLink link) {
+    _logLine('Richte Transport ein...');
 
-  void _showBluetoothDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Bluetooth einschalten'),
-        content: const Text(
-          'Bitte aktiviere Bluetooth in den Einstellungen, um die App zu nutzen.\n\n'
-          'Gehe zu: Einstellungen → Bluetooth',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _initTransport() {
-    _transportLink = _BleTransportLink(sendCallback: _sendRawBytes);
     _transport = TransportEndpoint(
-      name: 'local',
-      link: _transportLink,
+      name: widget.role.name,
+      link: link,
       config: const TransportConfig(
-        maxPayload: 180, // BLE MTU - overhead
+        maxPayload: kMaxPayloadSize,
         ackTimeout: Duration(milliseconds: 500),
         maxRetries: 10,
       ),
       logger: _logLine,
     );
 
-    _transportMessageSub = _transport.messages.listen(_onTransportMessage);
+    // Listen for incoming BLE data and feed to transport
+    if (widget.role == ChatRole.responder) {
+      _inboundSub = _gattServer!.inbound.listen((bytes) {
+        _transport!.handlePacket(bytes);
+      });
+    } else {
+      _inboundSub = _gattClient!.inbound.listen((bytes) {
+        _transport!.handlePacket(bytes);
+      });
+    }
 
-    // Default to initiator, will be adjusted on connect
-    _chatSession = ChatSession(
-      contactId: 'test-peer',
-      sessionId: kTestSessionId,
-      keyId: 'test-key',
-      masterKey: kTestMasterKey,
-      role: ChatRole.initiator,
-    );
+    // Listen for assembled messages from transport
+    _transportMessageSub = _transport!.messages.listen(_onTransportMessage);
+
+    _logLine('Transport bereit');
   }
 
-  void _setRole(ChatRole role) {
-    _chatSession = ChatSession(
-      contactId: 'test-peer',
-      sessionId: kTestSessionId,
-      keyId: 'test-key',
-      masterKey: kTestMasterKey,
-      role: role,
-    );
-    _isInitiator = role == ChatRole.initiator;
-    _logLine('Role set to: ${role.name}');
+  Future<void> _onTransportMessage(Uint8List data) async {
+    _logLine('Nachricht empfangen: ${data.length} bytes');
+    try {
+      final result = await _chatSession.decryptFrame(data);
+      _logLine('Entschlüsselt: ${result.message.bodyUtf8}');
+      setState(() {
+        _messages.add(result.message);
+      });
+    } catch (e) {
+      _logLine('Decrypt Fehler: $e');
+    }
   }
 
-  @override
-  void dispose() {
-    _scanResultsSub?.cancel();
-    _isScanningSub?.cancel();
-    _notifySub?.cancel();
-    _connectionSub?.cancel();
-    _adapterStateSub?.cancel();
-    _transportMessageSub?.cancel();
-    _messageController.dispose();
-    super.dispose();
+  // Peripheral actions
+  Future<void> _startAdvertising() async {
+    if (_gattServer == null) return;
+    
+    try {
+      await _gattServer!.startAdvertising(name: 'PRSM');
+      setState(() => _isAdvertising = true);
+      _logLine('Advertising gestartet');
+    } catch (e) {
+      _logLine('Advertising Fehler: $e');
+    }
+  }
+
+  Future<void> _stopAdvertising() async {
+    if (_gattServer == null) return;
+    
+    await _gattServer!.stopAdvertising();
+    setState(() => _isAdvertising = false);
+    _logLine('Advertising gestoppt');
+  }
+
+  // Central actions
+  Future<void> _startScan() async {
+    if (_gattClient == null) return;
+    
+    setState(() {
+      _discoveredDevices.clear();
+      _isScanning = true;
+    });
+    
+    try {
+      await _gattClient!.startScan();
+      _logLine('Scan gestartet');
+    } catch (e) {
+      _logLine('Scan Fehler: $e');
+      setState(() => _isScanning = false);
+    }
+  }
+
+  Future<void> _stopScan() async {
+    if (_gattClient == null) return;
+    
+    await _gattClient!.stopScan();
+    setState(() => _isScanning = false);
+    _logLine('Scan gestoppt');
+  }
+
+  Future<void> _connectTo(DiscoveredPeripheral device) async {
+    if (_gattClient == null) return;
+    
+    _logLine('Verbinde zu ${device.name ?? device.peripheral.uuid}...');
+    
+    try {
+      await _gattClient!.connect(device.peripheral);
+      _logLine('Verbunden!');
+    } catch (e) {
+      _logLine('Verbindung fehlgeschlagen: $e');
+    }
+  }
+
+  Future<void> _disconnect() async {
+    if (widget.role == ChatRole.initiator) {
+      await _gattClient?.disconnect();
+    }
+    // For peripheral, we can't force disconnect in MVP
+    
+    await _inboundSub?.cancel();
+    await _transportMessageSub?.cancel();
+    _transport?.resetSession();
+    
+    setState(() => _isConnected = false);
+    _logLine('Getrennt');
+  }
+
+  // Messaging
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty || _transport == null) return;
+
+    _messageController.clear();
+
+    try {
+      final result = await _chatSession.encryptText(body: text);
+      setState(() {
+        _messages.add(result.message);
+      });
+      _logLine('Verschlüsselt: ${result.frame.length} bytes');
+
+      await _transport!.sendMessage(result.frame);
+      _logLine('Gesendet!');
+      
+      // Update status
+      _updateMessageStatus(result.message.messageId, MessageStatus.sent);
+    } catch (e) {
+      _logLine('Senden fehlgeschlagen: $e');
+    }
+  }
+
+  void _updateMessageStatus(String messageId, int status) {
+    final index = _messages.indexWhere((m) => m.messageId == messageId);
+    if (index == -1) return;
+    
+    final msg = _messages[index];
+    setState(() {
+      _messages[index] = ChatMessage(
+        messageId: msg.messageId,
+        conversationId: msg.conversationId,
+        direction: msg.direction,
+        status: status,
+        sentAtMs: msg.sentAtMs,
+        receivedAtMs: msg.receivedAtMs,
+        bodyUtf8: msg.bodyUtf8,
+        keyId: msg.keyId,
+        counter: msg.counter,
+        sessionId: msg.sessionId,
+      );
+    });
   }
 
   void _logLine(String message) {
@@ -374,236 +539,28 @@ class _BleChatHomeState extends State<BleChatHome> {
     });
   }
 
-  void _addMessage(String text, bool isMe) {
-    setState(() {
-      _messages.add(_ChatBubble(text: text, isMe: isMe));
-    });
-  }
-
-  Future<void> _requestPermissions() async {
-    if (Platform.isAndroid) {
-      final statuses = await <Permission>[
-        Permission.bluetoothScan,
-        Permission.bluetoothConnect,
-        Permission.bluetoothAdvertise,
-        Permission.locationWhenInUse,
-      ].request();
-      _logLine('Permissions: ${statuses.values.map((s) => s.name).join(', ')}');
-    } else if (Platform.isIOS) {
-      // On iOS, requesting Bluetooth permission happens automatically when
-      // we access Bluetooth. But we can explicitly check/request it:
-      final status = await Permission.bluetooth.request();
-      _logLine('Bluetooth Permission: ${status.name}');
-    }
-
-    // Initialize BLE after permissions granted
-    await _initializeBle();
-  }
-
-  Future<void> _startScan() async {
-    // Make sure BLE is initialized first
-    if (!_bleInitialized) {
-      await _initializeBle();
-    }
-    if (!_bluetoothReady) {
-      _logLine('Bluetooth nicht bereit');
-      return;
-    }
-
-    setState(() {
-      _scanResults = <ScanResult>[];
-    });
-    _logLine('Scan gestartet...');
-    await FlutterBluePlus.startScan(
-      timeout: const Duration(seconds: 30),
-      withServices: [Guid(kChatServiceUuid)],
-    );
-  }
-
-  Future<void> _stopScan() async {
-    await FlutterBluePlus.stopScan();
-    _logLine('Scan gestoppt.');
-  }
-
-  Future<void> _connectToDevice(BluetoothDevice device) async {
-    _logLine('Verbinde zu ${device.remoteId}...');
-    _setRole(ChatRole.initiator); // We are initiating the connection
-
-    try {
-      await device.connect(timeout: const Duration(seconds: 15));
-      _connectedDevice = device;
-      _logLine('Verbunden!');
-
-      _connectionSub = device.connectionState.listen((state) {
-        _logLine('Connection state: $state');
-        if (state == BluetoothConnectionState.disconnected) {
-          _onDisconnected();
-        }
-      });
-
-      final services = await device.discoverServices();
-      _logLine('${services.length} Services gefunden');
-
-      for (final service in services) {
-        if (service.uuid.toString().toUpperCase().contains('F00D0001')) {
-          _logLine('Chat Service gefunden!');
-          for (final char in service.characteristics) {
-            final uuid = char.uuid.toString().toUpperCase();
-            if (uuid.contains('F00D0002')) {
-              _writeChar = char;
-              _logLine('Write Char gefunden');
-            } else if (uuid.contains('F00D0003')) {
-              _notifyChar = char;
-              _logLine('Notify Char gefunden');
-            }
-          }
-        }
-      }
-
-      if (_notifyChar != null) {
-        await _notifyChar!.setNotifyValue(true);
-        _notifySub = _notifyChar!.onValueReceived.listen(_onBytesReceived);
-        _logLine('Notifications aktiviert');
-      }
-
-      setState(() {});
-      _logLine('Bereit zum Chatten!');
-    } catch (e) {
-      _logLine('Verbindungsfehler: $e');
-    }
-  }
-
-  void _onDisconnected() {
-    _logLine('Verbindung getrennt');
-    setState(() {
-      _connectedDevice = null;
-      _writeChar = null;
-      _notifyChar = null;
-    });
-    _notifySub?.cancel();
+  @override
+  void dispose() {
+    _inboundSub?.cancel();
     _connectionSub?.cancel();
-    _transport.resetSession();
-  }
-
-  Future<void> _disconnect() async {
-    try {
-      await _connectedDevice?.disconnect();
-    } catch (_) {}
-    _onDisconnected();
-  }
-
-  void _onBytesReceived(List<int> value) {
-    final bytes = Uint8List.fromList(value);
-    _logLine('RX ${bytes.length} bytes');
-    _transport.handlePacket(bytes);
-  }
-
-  void _sendRawBytes(Uint8List bytes) {
-    if (_writeChar == null) {
-      _logLine('Kein Write-Char!');
-      return;
-    }
-    _logLine('TX ${bytes.length} bytes');
-    _writeChar!.write(bytes.toList(), withoutResponse: false);
-  }
-
-  Future<void> _onTransportMessage(Uint8List data) async {
-    _logLine('Transport: ${data.length} bytes empfangen');
-    try {
-      final result = await _chatSession.decryptFrame(data);
-      _logLine('Entschlüsselt: ${result.message.bodyUtf8}');
-      _addMessage(result.message.bodyUtf8, false);
-    } catch (e) {
-      _logLine('Decrypt Fehler: $e');
-    }
-  }
-
-  Future<void> _sendMessage() async {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-
-    _messageController.clear();
-    _addMessage(text, true);
-
-    try {
-      final result = await _chatSession.encryptText(body: text);
-      _logLine('Verschlüsselt: ${result.frame.length} bytes');
-      await _transport.sendMessage(result.frame);
-      _logLine('Gesendet!');
-    } catch (e) {
-      _logLine('Senden fehlgeschlagen: $e');
-    }
-  }
-
-  Future<void> _startAdvertising() async {
-    // Make sure BLE is initialized first
-    if (!_bleInitialized) {
-      await _initializeBle();
-    }
-    if (!_bluetoothReady) {
-      _logLine('Bluetooth nicht bereit');
-      return;
-    }
-
-    _setRole(ChatRole.responder); // We are the peripheral, waiting for connection
-
-    try {
-      // Lazy init peripheral
-      _peripheral ??= FlutterBlePeripheral();
-
-      final advertiseData = AdvertiseData(
-        serviceUuid: kChatServiceUuid,
-        includeDeviceName: false,
-      );
-      final advertiseSettings = AdvertiseSettings(
-        advertiseMode: AdvertiseMode.advertiseModeBalanced,
-        txPowerLevel: AdvertiseTxPower.advertiseTxPowerMedium,
-        connectable: true,
-        timeout: 0,
-      );
-      await _peripheral!.start(
-        advertiseData: advertiseData,
-        advertiseSettings: advertiseSettings,
-      );
-      setState(() {
-        _isAdvertising = true;
-      });
-      _logLine('Advertising gestartet (Responder-Rolle)');
-    } catch (error) {
-      _logLine('Advertising Fehler: $error');
-    }
-  }
-
-  Future<void> _stopAdvertising() async {
-    try {
-      await _peripheral?.stop();
-      setState(() {
-        _isAdvertising = false;
-      });
-      _logLine('Advertising gestoppt.');
-    } catch (error) {
-      _logLine('Advertising Stop Fehler: $error');
-    }
+    _discoverySub?.cancel();
+    _transportMessageSub?.cancel();
+    _gattServer?.dispose();
+    _gattClient?.dispose();
+    _messageController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final isConnected = _connectedDevice != null && _writeChar != null;
+    final isPeripheral = widget.role == ChatRole.responder;
+    final roleLabel = isPeripheral ? 'Peripheral' : 'Central';
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('BLE Chat${_isInitiator ? " (Initiator)" : " (Responder)"}'),
+        title: Text('PRSM Chat ($roleLabel)'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ApnsDebugScreen()),
-              );
-            },
-            tooltip: 'APNs Debug',
-          ),
-          if (isConnected)
+          if (_isConnected)
             IconButton(
               icon: const Icon(Icons.close),
               onPressed: _disconnect,
@@ -613,96 +570,37 @@ class _BleChatHomeState extends State<BleChatHome> {
       ),
       body: Column(
         children: [
-          // Bluetooth status bar
-          if (!_bluetoothReady)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              color: Colors.red.shade100,
-              child: Row(
-                children: [
-                  const Icon(Icons.bluetooth_disabled, size: 20, color: Colors.red),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _bluetoothStatus,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                  if (_bluetoothStatus.contains('ausgeschaltet'))
-                    TextButton(
-                      onPressed: () async {
-                        // On iOS, we can't programmatically open BT settings,
-                        // but we can prompt the user
-                        if (Platform.isIOS) {
-                          _showBluetoothDialog();
-                        } else {
-                          // Android: Try to turn on Bluetooth
-                          await FlutterBluePlus.turnOn();
-                        }
-                      },
-                      child: const Text('Einschalten'),
-                    )
-                  else
-                    TextButton(
-                      onPressed: _requestPermissions,
-                      child: const Text('Berechtigung'),
-                    ),
-                ],
-              ),
-            ),
-
           // Connection status bar
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: isConnected ? Colors.green.shade100 : Colors.orange.shade100,
-            child: Row(
-              children: [
-                Icon(
-                  isConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    isConnected
-                        ? 'Verbunden mit ${_connectedDevice!.remoteId}'
-                        : 'Nicht verbunden',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-                if (!isConnected) ...[
-                  TextButton(
-                    onPressed: _requestPermissions,
-                    child: const Text('Permissions'),
-                  ),
-                ],
-              ],
-            ),
-          ),
+          _buildStatusBar(),
 
           // Main content
           Expanded(
-            child: isConnected ? _buildChatView() : _buildConnectionView(),
+            child: _isConnected ? _buildChatView() : _buildConnectionView(),
           ),
 
-          // Log section (collapsible)
-          ExpansionTile(
-            title: const Text('Log'),
-            initiallyExpanded: false,
-            children: [
-              Container(
-                height: 150,
-                padding: const EdgeInsets.all(8),
-                color: Colors.grey.shade100,
-                child: ListView.builder(
-                  itemCount: _log.length,
-                  itemBuilder: (context, index) => Text(
-                    _log[index],
-                    style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
-                  ),
-                ),
-              ),
-            ],
+          // Log section
+          _buildLogSection(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: _isConnected ? Colors.green.shade100 : Colors.orange.shade100,
+      child: Row(
+        children: [
+          Icon(
+            _isConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+            size: 20,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _isConnected ? 'Verbunden' : 'Nicht verbunden',
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -710,118 +608,146 @@ class _BleChatHomeState extends State<BleChatHome> {
   }
 
   Widget _buildConnectionView() {
-    return ListView(
+    if (widget.role == ChatRole.responder) {
+      // Peripheral: Show advertising controls
+      return _buildPeripheralView();
+    } else {
+      // Central: Show scan results
+      return _buildCentralView();
+    }
+  }
+
+  Widget _buildPeripheralView() {
+    return Padding(
       padding: const EdgeInsets.all(16),
-      children: [
-        // Advertising section
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Peripheral (warten auf Verbindung)',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    ElevatedButton.icon(
-                      onPressed: _isAdvertising ? null : _startAdvertising,
-                      icon: const Icon(Icons.broadcast_on_personal),
-                      label: const Text('Advertise'),
-                    ),
-                    const SizedBox(width: 12),
-                    OutlinedButton(
-                      onPressed: _isAdvertising ? _stopAdvertising : null,
-                      child: const Text('Stop'),
-                    ),
-                    const SizedBox(width: 12),
-                    if (_isAdvertising)
-                      const Row(
-                        children: [
-                          SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          SizedBox(width: 8),
-                          Text('Warte...'),
-                        ],
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Hinweis: flutter_ble_peripheral kann nur Advertising. '
-                  'Für echte GATT-Characteristics brauchen wir ein natives Plugin.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('GATT Server', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          const Text(
+            'Starte Advertising, damit andere Geräte dich finden können.',
+            style: TextStyle(color: Colors.grey),
           ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // Scan section
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Central (verbinden zu Peer)',
-                    style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 8),
-                Row(
+          const SizedBox(height: 24),
+          
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _isAdvertising ? null : _startAdvertising,
+                icon: const Icon(Icons.broadcast_on_personal),
+                label: const Text('Advertise'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: _isAdvertising ? _stopAdvertising : null,
+                child: const Text('Stop'),
+              ),
+              const SizedBox(width: 12),
+              if (_isAdvertising)
+                const Row(
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: _isScanning ? null : _startScan,
-                      icon: const Icon(Icons.search),
-                      label: const Text('Scan'),
+                    SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
-                    const SizedBox(width: 12),
-                    OutlinedButton(
-                      onPressed: _isScanning ? _stopScan : null,
-                      child: const Text('Stop'),
-                    ),
-                    const SizedBox(width: 12),
-                    if (_isScanning)
-                      const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
+                    SizedBox(width: 8),
+                    Text('Warte auf Verbindung...'),
                   ],
                 ),
-                const SizedBox(height: 12),
-                if (_scanResults.isEmpty)
-                  const Text('Keine Geräte gefunden.',
-                      style: TextStyle(color: Colors.grey))
-                else
-                  ..._scanResults.map((result) => ListTile(
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCentralView() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Geräte suchen', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _isScanning ? null : _startScan,
+                icon: const Icon(Icons.search),
+                label: const Text('Scan'),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: _isScanning ? _stopScan : null,
+                child: const Text('Stop'),
+              ),
+              const SizedBox(width: 12),
+              if (_isScanning)
+                const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          Expanded(
+            child: _discoveredDevices.isEmpty
+                ? const Center(
+                    child: Text(
+                      'Keine Geräte gefunden.\nStarte einen Scan.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _discoveredDevices.length,
+                    itemBuilder: (context, index) {
+                      final device = _discoveredDevices[index];
+                      return ListTile(
                         leading: const Icon(Icons.bluetooth),
-                        title: Text(result.device.platformName.isNotEmpty
-                            ? result.device.platformName
-                            : result.device.remoteId.toString()),
-                        subtitle: Text('RSSI: ${result.rssi}'),
+                        title: Text(device.name ?? 'Unbekannt'),
+                        subtitle: Text('RSSI: ${device.rssi}'),
                         trailing: ElevatedButton(
-                          onPressed: () => _connectToDevice(result.device),
-                          child: const Text('Connect'),
+                          onPressed: () => _connectTo(device),
+                          child: const Text('Verbinden'),
                         ),
-                      )),
-              ],
-            ),
+                      );
+                    },
+                  ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildChatView() {
     return Column(
       children: [
-        // Messages list
+        // Encryption banner
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: Colors.teal.shade50,
+          child: Row(
+            children: [
+              Icon(Icons.lock, size: 16, color: Colors.teal.shade700),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Ende-zu-Ende verschlüsselt • Session DEADBEEF',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.teal.shade800,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // Messages
         Expanded(
           child: _messages.isEmpty
               ? const Center(
@@ -836,30 +762,13 @@ class _BleChatHomeState extends State<BleChatHome> {
                   itemCount: _messages.length,
                   itemBuilder: (context, index) {
                     final msg = _messages[index];
-                    return Align(
-                      alignment:
-                          msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
-                        decoration: BoxDecoration(
-                          color: msg.isMe
-                              ? Colors.teal.shade100
-                              : Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        constraints: BoxConstraints(
-                          maxWidth: MediaQuery.of(context).size.width * 0.75,
-                        ),
-                        child: Text(msg.text),
-                      ),
-                    );
+                    final isMe = msg.direction == MessageDirection.outbound;
+                    return _buildMessageBubble(msg, isMe);
                   },
                 ),
         ),
 
-        // Input field
+        // Input
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
@@ -881,8 +790,7 @@ class _BleChatHomeState extends State<BleChatHome> {
                     decoration: const InputDecoration(
                       hintText: 'Nachricht eingeben...',
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
@@ -899,23 +807,78 @@ class _BleChatHomeState extends State<BleChatHome> {
       ],
     );
   }
-}
 
-class _ChatBubble {
-  _ChatBubble({required this.text, required this.isMe});
+  Widget _buildMessageBubble(ChatMessage msg, bool isMe) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.teal.shade100 : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.75,
+        ),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(msg.bodyUtf8),
+            const SizedBox(height: 4),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  _formatTime(msg.sentAtMs),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                ),
+                if (isMe) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    msg.status == MessageStatus.sent
+                        ? Icons.check
+                        : msg.status == MessageStatus.failed
+                            ? Icons.error_outline
+                            : Icons.schedule,
+                    size: 12,
+                    color: msg.status == MessageStatus.failed
+                        ? Colors.red
+                        : Colors.grey,
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  final String text;
-  final bool isMe;
-}
+  String _formatTime(int millis) {
+    if (millis == 0) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(millis);
+    return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
 
-/// Transport link that uses a callback to send bytes
-class _BleTransportLink implements TransportLink {
-  _BleTransportLink({required this.sendCallback});
-
-  final void Function(Uint8List bytes) sendCallback;
-
-  @override
-  void send(String from, Uint8List bytes) {
-    sendCallback(bytes);
+  Widget _buildLogSection() {
+    return ExpansionTile(
+      title: const Text('Log'),
+      initiallyExpanded: false,
+      children: [
+        Container(
+          height: 150,
+          padding: const EdgeInsets.all(8),
+          color: Colors.grey.shade100,
+          child: ListView.builder(
+            itemCount: _log.length,
+            itemBuilder: (context, index) => Text(
+              _log[index],
+              style: const TextStyle(fontSize: 10, fontFamily: 'monospace'),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
