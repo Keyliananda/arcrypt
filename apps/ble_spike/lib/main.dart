@@ -296,6 +296,10 @@ class _ChatScreenState extends State<ChatScreen> {
   ChatSession? _chatSession;
   PairingSession? _pairing;
 
+  // Reconnect/pinning (central side optional)
+  Uint8List? _expectedPeerStaticPubkeyX25519;
+  bool _requireExpectedPeer = false;
+
   // State
   bool _isConnected = false;
   bool _isScanning = false;
@@ -331,6 +335,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _transport?.resetSession();
             _pairing?.reset();
             _chatSession = null;
+            _expectedPeerStaticPubkeyX25519 = null;
+            _requireExpectedPeer = false;
           }
         });
 
@@ -348,6 +354,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _transport?.resetSession();
             _pairing?.reset();
             _chatSession = null;
+            _expectedPeerStaticPubkeyX25519 = null;
+            _requireExpectedPeer = false;
           }
         });
 
@@ -410,6 +418,8 @@ class _ChatScreenState extends State<ChatScreen> {
           _finalizeChatSessionFromPairing();
         }
       },
+      expectedPeerStaticPubkeyX25519: _expectedPeerStaticPubkeyX25519,
+      requireExpectedPeer: _requireExpectedPeer,
     );
     unawaited(_pairing!.startIfInitiator());
   }
@@ -515,7 +525,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _connectTo(DiscoveredPeripheral device) async {
     if (_gattClient == null) return;
-    
+
+    final expected = await _promptExpectedPeerForReconnect();
+    if (!mounted) return;
+    setState(() {
+      _expectedPeerStaticPubkeyX25519 = expected?.staticPubkey32;
+      _requireExpectedPeer = expected != null;
+    });
+
     _logLine('Verbinde zu ${device.name ?? device.peripheral.uuid}...');
     
     try {
@@ -524,6 +541,51 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       _logLine('Verbindung fehlgeschlagen: $e');
     }
+  }
+
+  Future<_ExpectedPeer?> _promptExpectedPeerForReconnect() async {
+    if (widget.role != ChatRole.initiator) return null;
+
+    final contacts = ChatStorage.instance.contactsBox.values
+        .where((c) => c.trusted && !c.blocked && (c.staticPubkey?.length == 32))
+        .toList()
+      ..sort((a, b) => a.nickname.compareTo(b.nickname));
+
+    if (contacts.isEmpty) return null;
+
+    return showDialog<_ExpectedPeer?>(
+      context: context,
+      builder: (context) {
+        return SimpleDialog(
+          title: const Text('Sicher verbinden'),
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Text(
+                'Für bekannte Kontakte kann Reconnect ohne SAS erfolgen (Pinning).',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Neues Pairing (SAS vergleichen)'),
+            ),
+            ...contacts.map((c) {
+              return SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(
+                  _ExpectedPeer(
+                    contactId: c.contactId,
+                    nickname: c.nickname,
+                    staticPubkey32: Uint8List.fromList(c.staticPubkey!),
+                  ),
+                ),
+                child: Text('Reconnect: ${c.nickname}'),
+              );
+            }),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _disconnect() async {
@@ -537,6 +599,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _transport?.resetSession();
     _pairing?.reset();
     _chatSession = null;
+    _expectedPeerStaticPubkeyX25519 = null;
+    _requireExpectedPeer = false;
     
     setState(() => _isConnected = false);
     _logLine('Getrennt');
@@ -658,7 +722,7 @@ class _ChatScreenState extends State<ChatScreen> {
             PairingStage.waitingPeerSas => 'Pairing: warte Peer…',
             PairingStage.waitingMasterKey => 'Pairing: warte Key…',
             PairingStage.waitingMasterKeyAck => 'Pairing: warte ACK…',
-            PairingStage.established => 'Pairing: sicher',
+            PairingStage.established => pairing.trustedReconnect ? 'Reconnect: sicher' : 'Pairing: sicher',
             PairingStage.failed => 'Pairing: FEHLER',
           };
 
@@ -811,7 +875,7 @@ class _ChatScreenState extends State<ChatScreen> {
             pairing.stage == PairingStage.waitingPeerSas ||
             pairing.stage == PairingStage.waitingMasterKey ||
             pairing.stage == PairingStage.waitingMasterKeyAck);
-    final needsSasConfirm = sasVisible && !pairing!.localSasConfirmed;
+    final needsSasConfirm = sasVisible && !pairing!.localSasConfirmed && !pairing.trustedReconnect;
     final sessionIdLabel = _chatSession == null ? null : _hex(_chatSession!.sessionIdBytes);
 
     return Column(
@@ -855,7 +919,9 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'SAS: ${pairing.sas ?? "…"}',
+                    pairing.trustedReconnect
+                        ? 'Reconnect: verifiziert (Pinning)'
+                        : 'SAS: ${pairing.sas ?? "…"}',
                     style: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
@@ -1005,4 +1071,16 @@ class _ChatScreenState extends State<ChatScreen> {
       ],
     );
   }
+}
+
+class _ExpectedPeer {
+  _ExpectedPeer({
+    required this.contactId,
+    required this.nickname,
+    required this.staticPubkey32,
+  });
+
+  final String contactId;
+  final String nickname;
+  final Uint8List staticPubkey32;
 }

@@ -10,7 +10,7 @@ Scope:
 - [x] SEC-001: Threat Model finalisieren (1 Seite) und explizite Security-Claims definieren (was wir versprechen / was nicht). (done 2026-02-06; added `docs/threat-model-prsm-remote-v1.md`)
 - [x] SEC-002: Krypto-Entscheidung festziehen: minimaler MasterKey-Refresh vs Double Ratchet (Empfehlung: Ratchet). (done 2026-02-06; decision: Double Ratchet fuer Remote; BLE-Spike bleibt bei master_key + counter bis Ratchet-Implementierung)
 - [x] SEC-003: Pairing implementieren: Noise XX + SAS/QR bestaetigen; danach Peer-Static-Key pinnen. (done 2026-02-06; implemented in Flutter BLE spike: `apps/ble_spike/lib/security/noise_xx.dart`, `apps/ble_spike/lib/security/pairing_session.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/main.dart`)
-- [ ] SEC-004: Reconnect implementieren: Noise IK (oder XX mit Pinning) fuer bekannte Peers, inkl. “no silent downgrade”.
+- [x] SEC-004: Reconnect implementieren: Noise IK (oder XX mit Pinning) fuer bekannte Peers, inkl. “no silent downgrade”. (done 2026-02-06; implemented Noise XX + pinning + auto-SAS confirm for trusted peers in Flutter BLE spike: `apps/ble_spike/lib/security/pairing_session.dart`, `apps/ble_spike/lib/security/pairing_storage.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/main.dart`, `apps/ble_spike/test/pairing_session_reconnect_test.dart`)
 - [ ] SEC-005: Key-Rotation “Treffen-Trigger” + Two-Phase Commit implementieren (ACK vor Delete), wie in `docs/security-spec-v1.md`.
 - [ ] SEC-006: Secure Storage: Secrets/States in iOS Keychain + Android Keystore; Backup-Policy entscheiden und umsetzen.
 - [ ] SEC-007: Nonce/Counter Safety: Persistenz und Crash-Safety so, dass kein Counter-Reset zu Nonce-Reuse fuehrt.

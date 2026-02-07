@@ -6,13 +6,14 @@ import 'package:cryptography/cryptography.dart';
 
 import 'chat_ids.dart';
 import 'chat_models.dart';
+import '../security/pairing_storage.dart';
 
 const String kAppMetaKey = 'meta';
 const String kSecurityBox = 'security';
 const String kDeviceStaticPrivX25519Key = 'device_static_priv_x25519';
 const String kDeviceStaticPubX25519Key = 'device_static_pub_x25519';
 
-class ChatStorage {
+class ChatStorage implements PairingStorage {
   ChatStorage._();
 
   static final ChatStorage instance = ChatStorage._();
@@ -86,6 +87,7 @@ class ChatStorage {
     }
   }
 
+  @override
   Future<SimpleKeyPair> ensureDeviceStaticKeyPairX25519() async {
     final box = securityBox;
     final priv = box.get(kDeviceStaticPrivX25519Key);
@@ -112,6 +114,29 @@ class ChatStorage {
     );
   }
 
+  Future<String> contactIdFromStaticPubkeyX25519(Uint8List peerStaticPubkeyX25519) async {
+    if (peerStaticPubkeyX25519.length != 32) {
+      throw ArgumentError('peerStaticPubkeyX25519 must be 32 bytes');
+    }
+    final digest = await Sha256().hash(peerStaticPubkeyX25519);
+    final idBytes = Uint8List.fromList(digest.bytes.sublist(0, 16));
+    return base64UrlEncodeNoPad(idBytes);
+  }
+
+  @override
+  Future<Contact?> findTrustedContactByStaticPubkeyX25519({
+    required Uint8List peerStaticPubkeyX25519,
+  }) async {
+    final contactId = await contactIdFromStaticPubkeyX25519(peerStaticPubkeyX25519);
+    final contact = contactsBox.get(contactId);
+    if (contact == null) return null;
+    if (!contact.trusted) return null;
+    if (contact.blocked) return null;
+    if (contact.staticPubkey == null || contact.staticPubkey!.length != 32) return null;
+    return contact;
+  }
+
+  @override
   Future<Contact> upsertTrustedContactFromStaticPubkey({
     required Uint8List peerStaticPubkeyX25519,
     String? nickname,
@@ -120,9 +145,7 @@ class ChatStorage {
       throw ArgumentError('peerStaticPubkeyX25519 must be 32 bytes');
     }
 
-    final digest = await Sha256().hash(peerStaticPubkeyX25519);
-    final idBytes = Uint8List.fromList(digest.bytes.sublist(0, 16));
-    final contactId = base64UrlEncodeNoPad(idBytes);
+    final contactId = await contactIdFromStaticPubkeyX25519(peerStaticPubkeyX25519);
 
     final now = DateTime.now().millisecondsSinceEpoch;
     final box = contactsBox;

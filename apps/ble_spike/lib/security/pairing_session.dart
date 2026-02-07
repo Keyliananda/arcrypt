@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../chat/chat.dart';
 import 'noise_xx.dart';
+import 'pairing_storage.dart';
 import 'secure_channel.dart';
 
 const int kSecMagic = 0xF0;
@@ -30,15 +31,26 @@ class PairingSession {
     required this.role,
     required Future<void> Function(Uint8List bytes) send,
     required void Function() onUpdate,
-    ChatStorage? storage,
+    PairingStorage? storage,
+    Uint8List? expectedPeerStaticPubkeyX25519,
+    bool requireExpectedPeer = false,
+    bool autoConfirmSasIfTrusted = true,
   })  : _send = send,
         _onUpdate = onUpdate,
-        _storage = storage ?? ChatStorage.instance;
+        _storage = storage ?? ChatStorage.instance,
+        _expectedPeerStaticPubkeyX25519 = expectedPeerStaticPubkeyX25519 == null
+            ? null
+            : Uint8List.fromList(expectedPeerStaticPubkeyX25519),
+        _requireExpectedPeer = requireExpectedPeer,
+        _autoConfirmSasIfTrusted = autoConfirmSasIfTrusted;
 
   final ChatRole role;
   final Future<void> Function(Uint8List bytes) _send;
   final void Function() _onUpdate;
-  final ChatStorage _storage;
+  final PairingStorage _storage;
+  final Uint8List? _expectedPeerStaticPubkeyX25519;
+  final bool _requireExpectedPeer;
+  final bool _autoConfirmSasIfTrusted;
 
   PairingStage stage = PairingStage.idle;
   String? error;
@@ -51,6 +63,7 @@ class PairingSession {
   Uint8List? masterKey32;
   Uint8List? peerStaticPubkeyX25519;
   String? contactId;
+  bool trustedReconnect = false;
 
   SecureChannel? _channel;
   NoiseXXInitiator? _i;
@@ -136,6 +149,7 @@ class PairingSession {
     masterKey32 = null;
     peerStaticPubkeyX25519 = null;
     contactId = null;
+    trustedReconnect = false;
     _channel = null;
     _i = null;
     _r = null;
@@ -218,12 +232,45 @@ class PairingSession {
     sas = sasString6FromHandshakeHash(result.handshakeHash);
     peerStaticPubkeyX25519 = Uint8List.fromList(result.peerStaticPublicKey);
 
+    if (peerStaticPubkeyX25519!.length != 32) {
+      _fail('peer static pubkey length invalid');
+      return;
+    }
+
+    final expected = _expectedPeerStaticPubkeyX25519;
+    if (expected != null && expected.length != 32) {
+      _fail('expected peer static pubkey must be 32 bytes');
+      return;
+    }
+
+    if (expected != null) {
+      if (!_bytesEqual(expected, peerStaticPubkeyX25519!)) {
+        _fail('pinned peer key mismatch (refusing silent downgrade)');
+        return;
+      }
+      trustedReconnect = true;
+    } else {
+      final known = await _storage.findTrustedContactByStaticPubkeyX25519(
+        peerStaticPubkeyX25519: peerStaticPubkeyX25519!,
+      );
+      trustedReconnect = known != null;
+    }
+
+    if (_requireExpectedPeer && !trustedReconnect) {
+      _fail('expected trusted peer not found (refusing silent downgrade)');
+      return;
+    }
+
     final txKey = isInitiator ? result.initiatorToResponderKey : result.responderToInitiatorKey;
     final rxKey = isInitiator ? result.responderToInitiatorKey : result.initiatorToResponderKey;
     _channel = SecureChannel(sessionId4: sessionId4!, txKey: txKey, rxKey: rxKey);
 
     stage = PairingStage.sasReady;
     _onUpdate();
+
+    if (trustedReconnect && _autoConfirmSasIfTrusted && !localSasConfirmed) {
+      unawaited(confirmSas());
+    }
   }
 
   void _maybeProceedAfterSas() {
@@ -321,5 +368,13 @@ class PairingSession {
     stage = PairingStage.failed;
     error = msg;
     _onUpdate();
+  }
+
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }
