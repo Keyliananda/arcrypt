@@ -6,16 +6,21 @@ Scope:
 - Basierend auf `docs/security-spec-v1.md` (Noise + SAS) und `docs/chat-spec-v1.md` (Frames).
 - Erweitert fuer Remote und Langzeitbetrieb.
 
+## Status
+- Stand: 2026-02-08
+- Gesamtstatus: Alle SEC Tasks (`SEC-001` bis `SEC-009`) sind abgeschlossen.
+- Naechster Schritt fuer Grant-Roadmap: `SRV-001` in `docs/roadmap-message-relay-v1.md`.
+
 ## Taskliste (in Reihenfolge)
 - [x] SEC-001: Threat Model finalisieren (1 Seite) und explizite Security-Claims definieren (was wir versprechen / was nicht). (done 2026-02-06; added `docs/threat-model-prsm-remote-v1.md`)
 - [x] SEC-002: Krypto-Entscheidung festziehen: minimaler MasterKey-Refresh vs Double Ratchet (Empfehlung: Ratchet). (done 2026-02-06; decision: Double Ratchet fuer Remote; BLE-Spike bleibt bei master_key + counter bis Ratchet-Implementierung)
 - [x] SEC-003: Pairing implementieren: Noise XX + SAS/QR bestaetigen; danach Peer-Static-Key pinnen. (done 2026-02-06; implemented in Flutter BLE spike: `apps/ble_spike/lib/security/noise_xx.dart`, `apps/ble_spike/lib/security/pairing_session.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/main.dart`)
 - [x] SEC-004: Reconnect implementieren: Noise IK (oder XX mit Pinning) fuer bekannte Peers, inkl. “no silent downgrade”. (done 2026-02-06; implemented Noise XX + pinning + auto-SAS confirm for trusted peers in Flutter BLE spike: `apps/ble_spike/lib/security/pairing_session.dart`, `apps/ble_spike/lib/security/pairing_storage.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/main.dart`, `apps/ble_spike/test/pairing_session_reconnect_test.dart`)
 - [x] SEC-005: Key-Rotation “Treffen-Trigger” + Two-Phase Commit implementieren (ACK vor Delete), wie in `docs/security-spec-v1.md`. (done 2026-02-08; implemented reconnect refresh trigger + key reuse path + explicit prepare/ack/commit flow in `apps/ble_spike/lib/security/pairing_session.dart`, `apps/ble_spike/lib/security/pairing_storage.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/main.dart`; covered by `apps/ble_spike/test/pairing_session_reconnect_test.dart`)
-- [ ] SEC-006: Secure Storage: Secrets/States in iOS Keychain + Android Keystore; Backup-Policy entscheiden und umsetzen.
+- [x] SEC-006: Secure Storage: Secrets/States in iOS Keychain + Android Keystore; Backup-Policy entscheiden und umsetzen. (done 2026-02-08; added secure secret storage with Keychain/Keystore-backed `flutter_secure_storage`, migrated device static keys out of Hive, encrypted key material-at-rest with KEK in secure storage in `apps/ble_spike/lib/security/secure_secret_store.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`; disabled Android app backups in `apps/ble_spike/android/app/src/main/AndroidManifest.xml`)
 - [x] SEC-007: Nonce/Counter Safety: Persistenz und Crash-Safety so, dass kein Counter-Reset zu Nonce-Reuse fuehrt. (done 2026-02-08; implemented persistent session counter state + tx reservation + rx commit in `apps/ble_spike/lib/chat/chat_models.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/chat/chat_session.dart`, `apps/ble_spike/lib/main.dart`; covered by `apps/ble_spike/test/chat_session_test.dart`)
-- [ ] SEC-008: Remote-tauglich machen: Out-of-order/duplicate/replay Regeln spezifizieren und implementieren (Ratchet erfordert das sowieso).
-- [ ] SEC-009: Testpaket: deterministische Testvektoren, Property/Fuzz Tests fuer Replay/Out-of-order, und Migration Tests. (started 2026-02-08; added targeted regression tests for rotation trigger/2PC and counter persistence in `apps/ble_spike/test/pairing_session_reconnect_test.dart`, `apps/ble_spike/test/chat_session_test.dart`)
+- [x] SEC-008: Remote-tauglich machen: Out-of-order/duplicate/replay Regeln spezifizieren und implementieren (Ratchet erfordert das sowieso). (done 2026-02-08; implemented 64-message replay window with duplicate and stale detection in `apps/ble_spike/lib/chat/chat_replay_window.dart`, integrated in `apps/ble_spike/lib/chat/chat_session.dart`, `apps/ble_spike/lib/chat/chat_storage.dart`, `apps/ble_spike/lib/chat/chat_models.dart`, `apps/ble_spike/lib/main.dart`)
+- [x] SEC-009: Testpaket: deterministische Testvektoren, Property/Fuzz Tests fuer Replay/Out-of-order, und Migration Tests. (done 2026-02-08; added replay-window/out-of-order regression tests in `apps/ble_spike/test/chat_session_test.dart`, randomized model-based replay tests in `apps/ble_spike/test/chat_replay_window_test.dart`, and secure storage migration/roundtrip tests in `apps/ble_spike/test/secure_secret_store_test.dart`; verified with `flutter test`)
 
 ## Schritte
 1. Threat Model festziehen (konkret)

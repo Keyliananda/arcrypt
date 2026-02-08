@@ -1,12 +1,13 @@
 import 'dart:typed_data';
 
-import 'package:hive/hive.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:cryptography/cryptography.dart';
 
 import 'chat_ids.dart';
 import 'chat_models.dart';
+import 'chat_replay_window.dart';
 import '../security/pairing_storage.dart';
+import '../security/secure_secret_store.dart';
 
 const String kAppMetaKey = 'meta';
 const String kSecurityBox = 'security';
@@ -14,9 +15,12 @@ const String kDeviceStaticPrivX25519Key = 'device_static_priv_x25519';
 const String kDeviceStaticPubX25519Key = 'device_static_pub_x25519';
 
 class ChatStorage implements PairingStorage {
-  ChatStorage._();
+  ChatStorage._({SecureSecretStore? secureSecretStore})
+    : _secureSecretStore = secureSecretStore ?? SecureSecretStore.instance;
 
   static final ChatStorage instance = ChatStorage._();
+
+  final SecureSecretStore _secureSecretStore;
 
   bool _initialized = false;
 
@@ -96,14 +100,28 @@ class ChatStorage implements PairingStorage {
 
   @override
   Future<SimpleKeyPair> ensureDeviceStaticKeyPairX25519() async {
-    final box = securityBox;
-    final priv = box.get(kDeviceStaticPrivX25519Key);
-    final pub = box.get(kDeviceStaticPubX25519Key);
-    if (priv != null && pub != null && priv.length == 32 && pub.length == 32) {
+    final secure = await _secureSecretStore.readDeviceStaticKeyPairX25519();
+    if (secure != null) {
+      return secure;
+    }
+
+    final legacyBox = securityBox;
+    final legacyPriv = legacyBox.get(kDeviceStaticPrivX25519Key);
+    final legacyPub = legacyBox.get(kDeviceStaticPubX25519Key);
+    if (legacyPriv != null &&
+        legacyPub != null &&
+        legacyPriv.length == 32 &&
+        legacyPub.length == 32) {
+      await _secureSecretStore.writeDeviceStaticKeyPairX25519(
+        privateKey32: legacyPriv,
+        publicKey32: legacyPub,
+      );
+      await legacyBox.delete(kDeviceStaticPrivX25519Key);
+      await legacyBox.delete(kDeviceStaticPubX25519Key);
       return SimpleKeyPairData(
-        Uint8List.fromList(priv),
+        Uint8List.fromList(legacyPriv),
         publicKey: SimplePublicKey(
-          Uint8List.fromList(pub),
+          Uint8List.fromList(legacyPub),
           type: KeyPairType.x25519,
         ),
         type: KeyPairType.x25519,
@@ -115,8 +133,10 @@ class ChatStorage implements PairingStorage {
     final extracted = await keyPair.extract();
     final privBytes = Uint8List.fromList(extracted.bytes);
     final pubBytes = Uint8List.fromList(extracted.publicKey.bytes);
-    await box.put(kDeviceStaticPrivX25519Key, privBytes);
-    await box.put(kDeviceStaticPubX25519Key, pubBytes);
+    await _secureSecretStore.writeDeviceStaticKeyPairX25519(
+      privateKey32: privBytes,
+      publicKey32: pubBytes,
+    );
     return SimpleKeyPairData(
       privBytes,
       publicKey: SimplePublicKey(pubBytes, type: KeyPairType.x25519),
@@ -191,21 +211,21 @@ class ChatStorage implements PairingStorage {
 
   @override
   Future<KeyMaterial?> findKeyById(String keyId) async {
-    return keysBox.get(keyId);
+    return _findAndDecodeKeyById(keyId);
   }
 
   @override
   Future<KeyMaterial?> findCurrentKeyForContact(String contactId) async {
     final contact = contactsBox.get(contactId);
     if (contact == null || contact.currentKeyId.isEmpty) return null;
-    return keysBox.get(contact.currentKeyId);
+    return _findAndDecodeKeyById(contact.currentKeyId);
   }
 
   @override
   Future<KeyMaterial?> findPendingKeyForContact(String contactId) async {
     final contact = contactsBox.get(contactId);
     if (contact == null || contact.pendingKeyId.isEmpty) return null;
-    return keysBox.get(contact.pendingKeyId);
+    return _findAndDecodeKeyById(contact.pendingKeyId);
   }
 
   @override
@@ -227,10 +247,13 @@ class ChatStorage implements PairingStorage {
       await keysBox.delete(contact.pendingKeyId);
     }
 
+    final persistedMasterKey = await _secureSecretStore.encryptLocalSecret(
+      Uint8List.fromList(masterKey32),
+    );
     final pending = KeyMaterial(
       keyId: keyId,
       contactId: contactId,
-      masterKey: Uint8List.fromList(masterKey32),
+      masterKey: persistedMasterKey,
       kdfVersion: 1,
       createdAtMs: nowMs,
       retiredAtMs: null,
@@ -364,6 +387,7 @@ class ChatStorage implements PairingStorage {
       sessionId: sessionId,
       nextTxCounter: 0,
       lastRxCounter: -1,
+      rxSeenWindowBits: 0,
       updatedAtMs: now,
     );
     await sessionStateBox.put(id, created);
@@ -389,6 +413,7 @@ class ChatStorage implements PairingStorage {
       sessionId: state.sessionId,
       nextTxCounter: reserved + 1,
       lastRxCounter: state.lastRxCounter,
+      rxSeenWindowBits: state.rxSeenWindowBits,
       updatedAtMs: now,
     );
     await sessionStateBox.put(state.stateId, updated);
@@ -406,7 +431,12 @@ class ChatStorage implements PairingStorage {
       keyId: keyId,
       sessionId: sessionId,
     );
-    if (counter <= state.lastRxCounter) return;
+    final replay = evaluateReplayWindow(
+      highestCounter: state.lastRxCounter,
+      seenMask: state.rxSeenWindowBits,
+      counter: counter,
+    );
+    if (!replay.accepted) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     final updated = SessionCounterState(
       stateId: state.stateId,
@@ -414,9 +444,45 @@ class ChatStorage implements PairingStorage {
       keyId: state.keyId,
       sessionId: state.sessionId,
       nextTxCounter: state.nextTxCounter,
-      lastRxCounter: counter,
+      lastRxCounter: replay.nextHighestCounter,
+      rxSeenWindowBits: replay.nextSeenMask,
       updatedAtMs: now,
     );
     await sessionStateBox.put(state.stateId, updated);
+  }
+
+  Future<KeyMaterial?> _findAndDecodeKeyById(String keyId) async {
+    final stored = keysBox.get(keyId);
+    if (stored == null) return null;
+
+    final decodedMasterKey = await _secureSecretStore
+        .decryptLocalSecretOrLegacy(stored.masterKey);
+
+    if (!_secureSecretStore.looksLikeEncryptedSecret(stored.masterKey) &&
+        decodedMasterKey.length == 32) {
+      final migrated = await _secureSecretStore.encryptLocalSecret(
+        decodedMasterKey,
+      );
+      await keysBox.put(
+        keyId,
+        KeyMaterial(
+          keyId: stored.keyId,
+          contactId: stored.contactId,
+          masterKey: migrated,
+          kdfVersion: stored.kdfVersion,
+          createdAtMs: stored.createdAtMs,
+          retiredAtMs: stored.retiredAtMs,
+        ),
+      );
+    }
+
+    return KeyMaterial(
+      keyId: stored.keyId,
+      contactId: stored.contactId,
+      masterKey: Uint8List.fromList(decodedMasterKey),
+      kdfVersion: stored.kdfVersion,
+      createdAtMs: stored.createdAtMs,
+      retiredAtMs: stored.retiredAtMs,
+    );
   }
 }

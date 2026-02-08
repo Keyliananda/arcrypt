@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   bluetooth_low_energy_windows
   flutter_ble_peripheral
+  flutter_secure_storage_windows
   permission_handler_windows
 )
 

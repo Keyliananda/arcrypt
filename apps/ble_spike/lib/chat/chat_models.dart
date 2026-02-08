@@ -144,6 +144,7 @@ class SessionCounterState {
     required this.sessionId,
     required this.nextTxCounter,
     required this.lastRxCounter,
+    required this.rxSeenWindowBits,
     required this.updatedAtMs,
   });
 
@@ -153,6 +154,7 @@ class SessionCounterState {
   final int sessionId;
   final int nextTxCounter;
   final int lastRxCounter;
+  final int rxSeenWindowBits;
   final int updatedAtMs;
 }
 
@@ -396,13 +398,14 @@ class SessionCounterStateAdapter extends TypeAdapter<SessionCounterState> {
       nextTxCounter: fields[4] as int? ?? 0,
       lastRxCounter: fields[5] as int? ?? -1,
       updatedAtMs: fields[6] as int? ?? 0,
+      rxSeenWindowBits: fields[7] as int? ?? 0,
     );
   }
 
   @override
   void write(BinaryWriter writer, SessionCounterState obj) {
     writer
-      ..writeByte(7)
+      ..writeByte(8)
       ..writeByte(0)
       ..write(obj.stateId)
       ..writeByte(1)
@@ -416,6 +419,8 @@ class SessionCounterStateAdapter extends TypeAdapter<SessionCounterState> {
       ..writeByte(5)
       ..write(obj.lastRxCounter)
       ..writeByte(6)
-      ..write(obj.updatedAtMs);
+      ..write(obj.updatedAtMs)
+      ..writeByte(7)
+      ..write(obj.rxSeenWindowBits);
   }
 }

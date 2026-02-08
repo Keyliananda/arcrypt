@@ -6,6 +6,7 @@ import 'package:cryptography/cryptography.dart';
 import 'chat_crypto.dart';
 import 'chat_ids.dart';
 import 'chat_models.dart';
+import 'chat_replay_window.dart';
 
 const int kChatPayloadHeaderLength = 24;
 
@@ -63,6 +64,7 @@ class ChatSession {
     this.role = ChatRole.initiator,
     int txCounter = 0,
     int lastRxCounter = -1,
+    int rxSeenWindowBits = 0,
     ReserveTxCounter? reserveTxCounter,
     CommitRxCounter? commitRxCounter,
     ChatCrypto? crypto,
@@ -70,6 +72,7 @@ class ChatSession {
        _masterKey = SecretKey(masterKey),
        _txCounter = txCounter,
        _lastRxCounter = lastRxCounter,
+       _rxSeenWindowBits = rxSeenWindowBits,
        _reserveTxCounter = reserveTxCounter,
        _commitRxCounter = commitRxCounter,
        _crypto = crypto ?? ChatCrypto() {
@@ -92,9 +95,11 @@ class ChatSession {
 
   int _txCounter;
   int _lastRxCounter;
+  int _rxSeenWindowBits;
 
   int get txCounter => _txCounter;
   int get lastRxCounter => _lastRxCounter;
+  int get rxSeenWindowBits => _rxSeenWindowBits;
   Uint8List get sessionIdBytes => Uint8List.fromList(_sessionId);
 
   // Direction bits are tied to handshake roles so both sides derive the same key.
@@ -106,8 +111,9 @@ class ChatSession {
     String? messageId,
     int? sentAtMs,
   }) async {
-    final counter = _reserveTxCounter != null
-        ? await _reserveTxCounter!.call()
+    final reserveTxCounter = _reserveTxCounter;
+    final counter = reserveTxCounter != null
+        ? await reserveTxCounter.call()
         : _txCounter;
     if (counter >= kChatMaxCounter) {
       throw ChatCounterExhausted('tx counter exhausted');
@@ -193,7 +199,15 @@ class ChatSession {
     if (header.type != kChatTypeText) {
       throw ChatDecodeException('unsupported type ${header.type}');
     }
-    if (header.counter <= _lastRxCounter) {
+    final replay = evaluateReplayWindow(
+      highestCounter: _lastRxCounter,
+      seenMask: _rxSeenWindowBits,
+      counter: header.counter,
+    );
+    if (!replay.accepted) {
+      if (replay.isTooOld) {
+        throw ChatDecodeException('replay window exceeded');
+      }
       throw ChatDecodeException('replay detected');
     }
 
@@ -237,10 +251,12 @@ class ChatSession {
       sessionId: _sessionIdAsInt(),
     );
 
-    if (_commitRxCounter != null) {
-      await _commitRxCounter!.call(header.counter);
+    final commitRxCounter = _commitRxCounter;
+    if (commitRxCounter != null) {
+      await commitRxCounter.call(header.counter);
     }
-    _lastRxCounter = header.counter;
+    _lastRxCounter = replay.nextHighestCounter;
+    _rxSeenWindowBits = replay.nextSeenMask;
 
     return ChatInboundResult(message: message);
   }

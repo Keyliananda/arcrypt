@@ -494,6 +494,7 @@ class _ChatScreenState extends State<ChatScreen> {
       role: widget.role,
       txCounter: counterState.nextTxCounter,
       lastRxCounter: counterState.lastRxCounter,
+      rxSeenWindowBits: counterState.rxSeenWindowBits,
       reserveTxCounter: () => ChatStorage.instance.reserveNextTxCounter(
         contactId: resolvedContactId,
         keyId: resolvedKeyId,
