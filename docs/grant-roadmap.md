@@ -45,12 +45,12 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Stand: 2026-02-08
 - Security-Block abgeschlossen: `SEC-001` bis `SEC-009` in `docs/roadmap-security-v2.md` sind erledigt.
 - Naechster auszufuehrender Block nach Regel "Naechster Task": `SRV-*` aus `docs/roadmap-message-relay-v1.md`.
-- Letztes Update: Security v2 Abschluss inkl. Secure Storage + Replay-Window + erweiterte Tests in `apps/ble_spike`.
-- Naechster konkreter Task: `SRV-001` (erster offener Punkt in `docs/roadmap-message-relay-v1.md`).
+- Letztes Update: `SRV-002` abgeschlossen (Message Relay API v1 spezifiziert) in `docs/message-relay-api-v1.md`.
+- Naechster konkreter Task: `SRV-003` (erster offener Punkt in `docs/roadmap-message-relay-v1.md`).
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
-- [ ] SRV-001.. : siehe `docs/roadmap-message-relay-v1.md`
+- [ ] SRV-003.. : siehe `docs/roadmap-message-relay-v1.md`
 - [ ] CLI-001.. : siehe `docs/roadmap-client-remote-transport-v1.md`
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)
