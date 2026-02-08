@@ -7,12 +7,14 @@ const String kContactsBox = 'contacts';
 const String kKeysBox = 'keys';
 const String kConversationsBox = 'conversations';
 const String kMessagesBox = 'messages';
+const String kSessionStateBox = 'session_state';
 
 const int kAppMetaTypeId = 20;
 const int kContactTypeId = 21;
 const int kKeyMaterialTypeId = 22;
 const int kConversationTypeId = 23;
 const int kChatMessageTypeId = 24;
+const int kSessionCounterStateTypeId = 25;
 
 class MessageDirection {
   const MessageDirection._();
@@ -51,6 +53,7 @@ class Contact {
     required this.lastSeenAtMs,
     required this.lastRefreshAtMs,
     required this.blocked,
+    this.pendingKeyId = '',
     this.staticPubkey,
     this.note,
   });
@@ -63,6 +66,7 @@ class Contact {
   final int lastSeenAtMs;
   final int lastRefreshAtMs;
   final bool blocked;
+  final String pendingKeyId;
   final String? note;
 }
 
@@ -132,6 +136,26 @@ class ChatMessage {
   final int sessionId;
 }
 
+class SessionCounterState {
+  SessionCounterState({
+    required this.stateId,
+    required this.contactId,
+    required this.keyId,
+    required this.sessionId,
+    required this.nextTxCounter,
+    required this.lastRxCounter,
+    required this.updatedAtMs,
+  });
+
+  final String stateId;
+  final String contactId;
+  final String keyId;
+  final int sessionId;
+  final int nextTxCounter;
+  final int lastRxCounter;
+  final int updatedAtMs;
+}
+
 class AppMetaAdapter extends TypeAdapter<AppMeta> {
   @override
   final int typeId = kAppMetaTypeId;
@@ -184,13 +208,14 @@ class ContactAdapter extends TypeAdapter<Contact> {
       lastRefreshAtMs: fields[6] as int? ?? 0,
       blocked: fields[7] as bool? ?? false,
       note: fields[8] as String?,
+      pendingKeyId: fields[9] as String? ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, Contact obj) {
     writer
-      ..writeByte(9)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.contactId)
       ..writeByte(1)
@@ -208,7 +233,9 @@ class ContactAdapter extends TypeAdapter<Contact> {
       ..writeByte(7)
       ..write(obj.blocked)
       ..writeByte(8)
-      ..write(obj.note);
+      ..write(obj.note)
+      ..writeByte(9)
+      ..write(obj.pendingKeyId);
   }
 }
 
@@ -347,5 +374,48 @@ class ChatMessageAdapter extends TypeAdapter<ChatMessage> {
       ..write(obj.counter)
       ..writeByte(9)
       ..write(obj.sessionId);
+  }
+}
+
+class SessionCounterStateAdapter extends TypeAdapter<SessionCounterState> {
+  @override
+  final int typeId = kSessionCounterStateTypeId;
+
+  @override
+  SessionCounterState read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{};
+    for (var i = 0; i < numOfFields; i++) {
+      fields[reader.readByte()] = reader.read();
+    }
+    return SessionCounterState(
+      stateId: fields[0] as String? ?? '',
+      contactId: fields[1] as String? ?? '',
+      keyId: fields[2] as String? ?? '',
+      sessionId: fields[3] as int? ?? 0,
+      nextTxCounter: fields[4] as int? ?? 0,
+      lastRxCounter: fields[5] as int? ?? -1,
+      updatedAtMs: fields[6] as int? ?? 0,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, SessionCounterState obj) {
+    writer
+      ..writeByte(7)
+      ..writeByte(0)
+      ..write(obj.stateId)
+      ..writeByte(1)
+      ..write(obj.contactId)
+      ..writeByte(2)
+      ..write(obj.keyId)
+      ..writeByte(3)
+      ..write(obj.sessionId)
+      ..writeByte(4)
+      ..write(obj.nextTxCounter)
+      ..writeByte(5)
+      ..write(obj.lastRxCounter)
+      ..writeByte(6)
+      ..write(obj.updatedAtMs);
   }
 }

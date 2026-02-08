@@ -9,10 +9,7 @@ import 'chat_models.dart';
 
 const int kChatPayloadHeaderLength = 24;
 
-enum ChatRole {
-  initiator,
-  responder,
-}
+enum ChatRole { initiator, responder }
 
 class ChatCounterExhausted implements Exception {
   ChatCounterExhausted(this.message);
@@ -54,6 +51,9 @@ class ChatInboundResult {
   final ChatMessage message;
 }
 
+typedef ReserveTxCounter = Future<int> Function();
+typedef CommitRxCounter = Future<void> Function(int counter);
+
 class ChatSession {
   ChatSession({
     required this.contactId,
@@ -63,12 +63,16 @@ class ChatSession {
     this.role = ChatRole.initiator,
     int txCounter = 0,
     int lastRxCounter = -1,
+    ReserveTxCounter? reserveTxCounter,
+    CommitRxCounter? commitRxCounter,
     ChatCrypto? crypto,
-  })  : _sessionId = Uint8List.fromList(sessionId),
-        _masterKey = SecretKey(masterKey),
-        _txCounter = txCounter,
-        _lastRxCounter = lastRxCounter,
-        _crypto = crypto ?? ChatCrypto() {
+  }) : _sessionId = Uint8List.fromList(sessionId),
+       _masterKey = SecretKey(masterKey),
+       _txCounter = txCounter,
+       _lastRxCounter = lastRxCounter,
+       _reserveTxCounter = reserveTxCounter,
+       _commitRxCounter = commitRxCounter,
+       _crypto = crypto ?? ChatCrypto() {
     if (_sessionId.length != 4) {
       throw ArgumentError('sessionId must be 4 bytes');
     }
@@ -83,6 +87,8 @@ class ChatSession {
   final Uint8List _sessionId;
   final SecretKey _masterKey;
   final ChatCrypto _crypto;
+  final ReserveTxCounter? _reserveTxCounter;
+  final CommitRxCounter? _commitRxCounter;
 
   int _txCounter;
   int _lastRxCounter;
@@ -100,7 +106,10 @@ class ChatSession {
     String? messageId,
     int? sentAtMs,
   }) async {
-    if (_txCounter >= kChatMaxCounter) {
+    final counter = _reserveTxCounter != null
+        ? await _reserveTxCounter!.call()
+        : _txCounter;
+    if (counter >= kChatMaxCounter) {
       throw ChatCounterExhausted('tx counter exhausted');
     }
 
@@ -133,7 +142,7 @@ class ChatSession {
     final header = ChatHeader(
       version: kChatVersion,
       type: kChatTypeText,
-      counter: _txCounter,
+      counter: counter,
       payloadLength: payload.length,
     );
     final headerBytes = header.encode();
@@ -142,7 +151,7 @@ class ChatSession {
       masterKey: _masterKey,
       sessionId: _sessionId,
       direction: _outboundDirection,
-      counter: _txCounter,
+      counter: counter,
       header: headerBytes,
       plaintext: payload,
     );
@@ -163,11 +172,11 @@ class ChatSession {
       receivedAtMs: 0,
       bodyUtf8: body,
       keyId: keyId,
-      counter: _txCounter,
+      counter: counter,
       sessionId: _sessionIdAsInt(),
     );
 
-    _txCounter += 1;
+    _txCounter = counter + 1;
 
     return ChatOutboundResult(message: message, frame: frame);
   }
@@ -188,7 +197,8 @@ class ChatSession {
       throw ChatDecodeException('replay detected');
     }
 
-    final expectedLength = kChatHeaderLength + header.payloadLength + kChatTagLength;
+    final expectedLength =
+        kChatHeaderLength + header.payloadLength + kChatTagLength;
     if (frame.length != expectedLength) {
       throw ChatDecodeException('frame length mismatch');
     }
@@ -227,6 +237,9 @@ class ChatSession {
       sessionId: _sessionIdAsInt(),
     );
 
+    if (_commitRxCounter != null) {
+      await _commitRxCounter!.call(header.counter);
+    }
     _lastRxCounter = header.counter;
 
     return ChatInboundResult(message: message);
@@ -273,14 +286,16 @@ class ChatSession {
     Uint8List cipherText,
     Uint8List macBytes,
   ) {
-    final frame = Uint8List(header.length + cipherText.length + macBytes.length);
-    frame.setRange(0, header.length, header);
-    frame.setRange(header.length, header.length + cipherText.length, cipherText);
-    frame.setRange(
-      header.length + cipherText.length,
-      frame.length,
-      macBytes,
+    final frame = Uint8List(
+      header.length + cipherText.length + macBytes.length,
     );
+    frame.setRange(0, header.length, header);
+    frame.setRange(
+      header.length,
+      header.length + cipherText.length,
+      cipherText,
+    );
+    frame.setRange(header.length + cipherText.length, frame.length, macBytes);
     return frame;
   }
 }

@@ -45,7 +45,7 @@ class RoleSelectionScreen extends StatefulWidget {
 class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   String _status = '';
   bool _checking = false;
-  
+
   // Keep a single instance of CentralManager
   CentralManager? _centralManager;
   StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _stateSub;
@@ -87,7 +87,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
 
   void _updateBleState(BluetoothLowEnergyState state) {
     if (!mounted) return;
-    
+
     if (state == BluetoothLowEnergyState.poweredOn) {
       setState(() {
         _checking = false;
@@ -96,7 +96,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     } else if (state == BluetoothLowEnergyState.unauthorized) {
       setState(() {
         _checking = false;
-        _status = 'Bluetooth-Berechtigung fehlt.\nBitte in den Einstellungen erlauben.';
+        _status =
+            'Bluetooth-Berechtigung fehlt.\nBitte in den Einstellungen erlauben.';
       });
     } else if (state == BluetoothLowEnergyState.poweredOff) {
       setState(() {
@@ -132,7 +133,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     if (!allGranted) {
       setState(() {
         _checking = false;
-        _status = 'Bluetooth-Berechtigungen fehlen.\nBitte in den Einstellungen erlauben.';
+        _status =
+            'Bluetooth-Berechtigungen fehlen.\nBitte in den Einstellungen erlauben.';
       });
       return;
     }
@@ -141,7 +143,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     // On iOS, accessing .state may trigger the permission dialog
     final currentState = _centralManager!.state;
     _updateBleState(currentState);
-    
+
     // If state is unknown, wait a moment for iOS to update
     if (currentState == BluetoothLowEnergyState.unknown) {
       await Future.delayed(const Duration(milliseconds: 500));
@@ -152,11 +154,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   }
 
   void _selectRole(ChatRole role) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ChatScreen(role: role),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => ChatScreen(role: role)));
   }
 
   @override
@@ -190,7 +190,9 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: isReady ? Colors.green.shade50 : Colors.orange.shade50,
+                    color: isReady
+                        ? Colors.green.shade50
+                        : Colors.orange.shade50,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -215,7 +217,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Peripheral button
                 SizedBox(
                   width: double.infinity,
@@ -326,7 +328,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Peripheral role: Start GATT Server
         _gattServer = GattServer(logger: _logLine);
         await _gattServer!.start();
-        
+
         _connectionSub = _gattServer!.connectionState.listen((connected) {
           setState(() => _isConnected = connected);
           if (connected) {
@@ -345,7 +347,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Central role: Initialize GATT Client
         _gattClient = GattClient(logger: _logLine);
         await _gattClient!.initialize();
-        
+
         _connectionSub = _gattClient!.connectionState.listen((connected) {
           setState(() => _isConnected = connected);
           if (connected) {
@@ -415,7 +417,7 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!mounted) return;
         setState(() {});
         if (_pairing?.stage == PairingStage.established) {
-          _finalizeChatSessionFromPairing();
+          unawaited(_finalizeChatSessionFromPairing());
         }
       },
       expectedPeerStaticPubkeyX25519: _expectedPeerStaticPubkeyX25519,
@@ -452,20 +454,64 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _finalizeChatSessionFromPairing() {
+  Future<void> _finalizeChatSessionFromPairing() async {
     final pairing = _pairing;
     if (pairing == null) return;
     if (pairing.stage != PairingStage.established) return;
-    if (pairing.masterKey32 == null || pairing.sessionId4 == null) return;
+    if (pairing.masterKey32 == null ||
+        pairing.sessionId4 == null ||
+        pairing.keyId == null)
+      return;
 
-    _chatSession = ChatSession(
-      contactId: pairing.contactId ?? 'peer',
-      sessionId: pairing.sessionId4!,
-      keyId: 'key-1',
+    final resolvedContactId = pairing.contactId ?? 'peer';
+    final resolvedKeyId = pairing.keyId!;
+    final resolvedSessionId = Uint8List.fromList(pairing.sessionId4!);
+    final sessionIdData = ByteData.sublistView(resolvedSessionId);
+    final sessionIdInt = sessionIdData.getUint32(0, Endian.little);
+
+    final existing = _chatSession;
+    if (existing != null &&
+        existing.contactId == resolvedContactId &&
+        existing.keyId == resolvedKeyId &&
+        _bytesEqual(existing.sessionIdBytes, resolvedSessionId)) {
+      return;
+    }
+
+    final counterState = await ChatStorage.instance.ensureSessionCounterState(
+      contactId: resolvedContactId,
+      keyId: resolvedKeyId,
+      sessionId: sessionIdInt,
+    );
+    if (!mounted) return;
+    if (_pairing != pairing || pairing.stage != PairingStage.established)
+      return;
+
+    final session = ChatSession(
+      contactId: resolvedContactId,
+      sessionId: resolvedSessionId,
+      keyId: resolvedKeyId,
       masterKey: pairing.masterKey32!,
       role: widget.role,
+      txCounter: counterState.nextTxCounter,
+      lastRxCounter: counterState.lastRxCounter,
+      reserveTxCounter: () => ChatStorage.instance.reserveNextTxCounter(
+        contactId: resolvedContactId,
+        keyId: resolvedKeyId,
+        sessionId: sessionIdInt,
+      ),
+      commitRxCounter: (counter) => ChatStorage.instance.commitLastRxCounter(
+        contactId: resolvedContactId,
+        keyId: resolvedKeyId,
+        sessionId: sessionIdInt,
+        counter: counter,
+      ),
     );
-    _logLine('Secure session bereit (contactId=${pairing.contactId ?? "peer"})');
+    setState(() {
+      _chatSession = session;
+    });
+    _logLine(
+      'Secure session bereit (contactId=$resolvedContactId, keyId=$resolvedKeyId)',
+    );
   }
 
   String _hex(Uint8List bytes) {
@@ -476,10 +522,18 @@ class _ChatScreenState extends State<ChatScreen> {
     return sb.toString().toUpperCase();
   }
 
+  bool _bytesEqual(Uint8List a, Uint8List b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
   // Peripheral actions
   Future<void> _startAdvertising() async {
     if (_gattServer == null) return;
-    
+
     try {
       await _gattServer!.startAdvertising(name: 'PRSM');
       setState(() => _isAdvertising = true);
@@ -491,7 +545,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopAdvertising() async {
     if (_gattServer == null) return;
-    
+
     await _gattServer!.stopAdvertising();
     setState(() => _isAdvertising = false);
     _logLine('Advertising gestoppt');
@@ -500,12 +554,12 @@ class _ChatScreenState extends State<ChatScreen> {
   // Central actions
   Future<void> _startScan() async {
     if (_gattClient == null) return;
-    
+
     setState(() {
       _discoveredDevices.clear();
       _isScanning = true;
     });
-    
+
     try {
       await _gattClient!.startScan();
       _logLine('Scan gestartet');
@@ -517,7 +571,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _stopScan() async {
     if (_gattClient == null) return;
-    
+
     await _gattClient!.stopScan();
     setState(() => _isScanning = false);
     _logLine('Scan gestoppt');
@@ -534,7 +588,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     _logLine('Verbinde zu ${device.name ?? device.peripheral.uuid}...');
-    
+
     try {
       await _gattClient!.connect(device.peripheral);
       _logLine('Verbunden!');
@@ -546,10 +600,13 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<_ExpectedPeer?> _promptExpectedPeerForReconnect() async {
     if (widget.role != ChatRole.initiator) return null;
 
-    final contacts = ChatStorage.instance.contactsBox.values
-        .where((c) => c.trusted && !c.blocked && (c.staticPubkey?.length == 32))
-        .toList()
-      ..sort((a, b) => a.nickname.compareTo(b.nickname));
+    final contacts =
+        ChatStorage.instance.contactsBox.values
+            .where(
+              (c) => c.trusted && !c.blocked && (c.staticPubkey?.length == 32),
+            )
+            .toList()
+          ..sort((a, b) => a.nickname.compareTo(b.nickname));
 
     if (contacts.isEmpty) return null;
 
@@ -593,7 +650,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await _gattClient?.disconnect();
     }
     // For peripheral, we can't force disconnect in MVP
-    
+
     await _inboundSub?.cancel();
     await _transportMessageSub?.cancel();
     _transport?.resetSession();
@@ -601,7 +658,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _chatSession = null;
     _expectedPeerStaticPubkeyX25519 = null;
     _requireExpectedPeer = false;
-    
+
     setState(() => _isConnected = false);
     _logLine('Getrennt');
   }
@@ -626,7 +683,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
       await _transport!.sendMessage(result.frame);
       _logLine('Gesendet!');
-      
+
       // Update status
       _updateMessageStatus(result.message.messageId, MessageStatus.sent);
     } catch (e) {
@@ -637,7 +694,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _updateMessageStatus(String messageId, int status) {
     final index = _messages.indexWhere((m) => m.messageId == messageId);
     if (index == -1) return;
-    
+
     final msg = _messages[index];
     setState(() {
       _messages[index] = ChatMessage(
@@ -722,26 +779,36 @@ class _ChatScreenState extends State<ChatScreen> {
             PairingStage.waitingPeerSas => 'Pairing: warte Peer…',
             PairingStage.waitingMasterKey => 'Pairing: warte Key…',
             PairingStage.waitingMasterKeyAck => 'Pairing: warte ACK…',
-            PairingStage.established => pairing.trustedReconnect ? 'Reconnect: sicher' : 'Pairing: sicher',
+            PairingStage.waitingMasterKeyCommit => 'Pairing: warte Commit…',
+            PairingStage.established =>
+              pairing.trustedReconnect
+                  ? 'Reconnect: sicher'
+                  : 'Pairing: sicher',
             PairingStage.failed => 'Pairing: FEHLER',
           };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       color: _isConnected
-          ? (_chatSession != null ? Colors.green.shade100 : Colors.yellow.shade100)
+          ? (_chatSession != null
+                ? Colors.green.shade100
+                : Colors.yellow.shade100)
           : Colors.orange.shade100,
       child: Row(
         children: [
           Icon(
-            _isConnected ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+            _isConnected
+                ? Icons.bluetooth_connected
+                : Icons.bluetooth_searching,
             size: 20,
           ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               _isConnected
-                  ? (_chatSession != null ? 'Verbunden (Secure)' : 'Verbunden (Pairing)')
+                  ? (_chatSession != null
+                        ? 'Verbunden (Secure)'
+                        : 'Verbunden (Pairing)')
                   : 'Nicht verbunden',
               style: const TextStyle(fontSize: 12),
             ),
@@ -776,7 +843,7 @@ class _ChatScreenState extends State<ChatScreen> {
             style: TextStyle(color: Colors.grey),
           ),
           const SizedBox(height: 24),
-          
+
           Row(
             children: [
               ElevatedButton.icon(
@@ -794,7 +861,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 const Row(
                   children: [
                     SizedBox(
-                      width: 16, height: 16,
+                      width: 16,
+                      height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     SizedBox(width: 8),
@@ -831,13 +899,14 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(width: 12),
               if (_isScanning)
                 const SizedBox(
-                  width: 16, height: 16,
+                  width: 16,
+                  height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 ),
             ],
           ),
           const SizedBox(height: 16),
-          
+
           Expanded(
             child: _discoveredDevices.isEmpty
                 ? const Center(
@@ -870,26 +939,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildChatView() {
     final pairing = _pairing;
-    final sasVisible = pairing != null &&
+    final sasVisible =
+        pairing != null &&
         (pairing.stage == PairingStage.sasReady ||
             pairing.stage == PairingStage.waitingPeerSas ||
             pairing.stage == PairingStage.waitingMasterKey ||
-            pairing.stage == PairingStage.waitingMasterKeyAck);
-    final needsSasConfirm = sasVisible && !pairing!.localSasConfirmed && !pairing.trustedReconnect;
-    final sessionIdLabel = _chatSession == null ? null : _hex(_chatSession!.sessionIdBytes);
+            pairing.stage == PairingStage.waitingMasterKeyAck ||
+            pairing.stage == PairingStage.waitingMasterKeyCommit);
+    final needsSasConfirm =
+        sasVisible && !pairing!.localSasConfirmed && !pairing.trustedReconnect;
+    final sessionIdLabel = _chatSession == null
+        ? null
+        : _hex(_chatSession!.sessionIdBytes);
 
     return Column(
       children: [
         // Encryption banner
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          color: _chatSession != null ? Colors.teal.shade50 : Colors.blueGrey.shade50,
+          color: _chatSession != null
+              ? Colors.teal.shade50
+              : Colors.blueGrey.shade50,
           child: Row(
             children: [
               Icon(
                 Icons.lock,
                 size: 16,
-                color: _chatSession != null ? Colors.teal.shade700 : Colors.blueGrey.shade700,
+                color: _chatSession != null
+                    ? Colors.teal.shade700
+                    : Colors.blueGrey.shade700,
               ),
               const SizedBox(width: 8),
               Expanded(
@@ -897,11 +975,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   _chatSession != null
                       ? 'Ende-zu-Ende verschlüsselt • Session $sessionIdLabel'
                       : (pairing == null
-                          ? 'Pairing initialisiert…'
-                          : 'Pairing: ${pairing.stage.name}${pairing.error != null ? " (${pairing.error})" : ""}'),
+                            ? 'Pairing initialisiert…'
+                            : 'Pairing: ${pairing.stage.name}${pairing.error != null ? " (${pairing.error})" : ""}'),
                   style: TextStyle(
                     fontSize: 12,
-                    color: _chatSession != null ? Colors.teal.shade800 : Colors.blueGrey.shade800,
+                    color: _chatSession != null
+                        ? Colors.teal.shade800
+                        : Colors.blueGrey.shade800,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -931,7 +1011,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: const Text('Stimmt'),
                   )
                 else
-                  const Text('OK', style: TextStyle(fontWeight: FontWeight.w600)),
+                  const Text(
+                    'OK',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
               ],
             ),
           ),
@@ -980,7 +1063,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     decoration: const InputDecoration(
                       hintText: 'Nachricht eingeben...',
                       border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
@@ -1012,7 +1098,9 @@ class _ChatScreenState extends State<ChatScreen> {
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         child: Column(
-          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          crossAxisAlignment: isMe
+              ? CrossAxisAlignment.end
+              : CrossAxisAlignment.start,
           children: [
             Text(msg.bodyUtf8),
             const SizedBox(height: 4),
@@ -1029,8 +1117,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     msg.status == MessageStatus.sent
                         ? Icons.check
                         : msg.status == MessageStatus.failed
-                            ? Icons.error_outline
-                            : Icons.schedule,
+                        ? Icons.error_outline
+                        : Icons.schedule,
                     size: 12,
                     color: msg.status == MessageStatus.failed
                         ? Colors.red
