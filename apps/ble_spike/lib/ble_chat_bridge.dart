@@ -11,16 +11,14 @@ const String kChatWriteCharUuid = 'F00D0002-1212-EFDE-1523-785FEABCD123';
 const String kChatNotifyCharUuid = 'F00D0003-1212-EFDE-1523-785FEABCD123';
 
 /// A BLE transport link that uses GATT characteristics.
-/// 
+///
 /// This bridge:
 /// - Connects to a remote device's GATT service
 /// - Writes outbound packets to the write characteristic
 /// - Receives inbound packets via notifications on the notify characteristic
 class BleChatBridge implements TransportLink {
-  BleChatBridge({
-    required this.device,
-    void Function(String)? logger,
-  }) : _logger = logger;
+  BleChatBridge({required this.device, void Function(String)? logger})
+    : _logger = logger;
 
   final BluetoothDevice device;
   final void Function(String)? _logger;
@@ -37,7 +35,7 @@ class BleChatBridge implements TransportLink {
 
   Future<void> connect() async {
     _log('Connecting to ${device.remoteId}...');
-    
+
     await device.connect(timeout: const Duration(seconds: 15));
     _connected = true;
     _log('Connected, discovering services...');
@@ -47,7 +45,8 @@ class BleChatBridge implements TransportLink {
 
     BluetoothService? chatService;
     for (final service in services) {
-      if (service.uuid.toString().toUpperCase() == kChatServiceUuid.toUpperCase()) {
+      if (service.uuid.toString().toUpperCase() ==
+          kChatServiceUuid.toUpperCase()) {
         chatService = service;
         break;
       }
@@ -109,16 +108,13 @@ class BleChatBridge implements TransportLink {
   }
 
   @override
-  void send(String from, Uint8List bytes) {
+  Future<void> send(Uint8List bytes) async {
     if (_writeChar == null) {
-      _log('Cannot send: write characteristic not available');
-      return;
+      throw StateError('cannot send: write characteristic not available');
     }
     _log('Sending ${bytes.length} bytes');
     // Use writeWithoutResponse for lower latency if supported
-    _writeChar!.write(bytes.toList(), withoutResponse: false).catchError((e) {
-      _log('Write error: $e');
-    });
+    await _writeChar!.write(bytes.toList(), withoutResponse: false);
   }
 
   void _log(String message) {
@@ -142,7 +138,7 @@ class LocalTestBridge implements TransportLink {
   }
 
   @override
-  void send(String from, Uint8List bytes) {
+  Future<void> send(Uint8List bytes) async {
     // Simulate sending to peer
     peer?.receive(Uint8List.fromList(bytes));
   }

@@ -1,5 +1,5 @@
 /// GATT Server for PRSM Chat (Peripheral Role)
-/// 
+///
 /// This implements the Peripheral side of the BLE transport:
 /// - Hosts the Chat GATT Service with RX and TX characteristics
 /// - Receives writes from Central on RX characteristic
@@ -16,40 +16,40 @@ import '../transport/transport.dart';
 
 /// GATT Server that hosts the PRSM Chat service
 class GattServer implements TransportLink {
-  GattServer({
-    void Function(String)? logger,
-  }) : _logger = logger;
+  GattServer({void Function(String)? logger}) : _logger = logger;
 
   final void Function(String)? _logger;
   final PeripheralManager _peripheral = PeripheralManager();
-  
+
   // Connected centrals (we track the first one for MVP)
   Central? _connectedCentral;
-  
+
   // Characteristics (stored after adding service)
   GATTCharacteristic? _rxCharacteristic;
   GATTCharacteristic? _txCharacteristic;
-  
+
   // State
   bool _isRunning = false;
   bool _isAdvertising = false;
-  
+
   // Streams
-  final StreamController<Uint8List> _inboundController = StreamController.broadcast();
-  final StreamController<bool> _connectionController = StreamController.broadcast();
-  
+  final StreamController<Uint8List> _inboundController =
+      StreamController.broadcast();
+  final StreamController<bool> _connectionController =
+      StreamController.broadcast();
+
   /// Stream of inbound data from Central
   Stream<Uint8List> get inbound => _inboundController.stream;
-  
+
   /// Stream of connection state changes
   Stream<bool> get connectionState => _connectionController.stream;
-  
+
   /// Whether the server is running
   bool get isRunning => _isRunning;
-  
+
   /// Whether we're advertising
   bool get isAdvertising => _isAdvertising;
-  
+
   /// Whether a Central is connected
   bool get isConnected => _connectedCentral != null;
 
@@ -57,7 +57,8 @@ class GattServer implements TransportLink {
   StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _stateSub;
   StreamSubscription<CentralConnectionStateChangedEventArgs>? _connectionSub;
   StreamSubscription<GATTCharacteristicWriteRequestedEventArgs>? _writeSub;
-  StreamSubscription<GATTCharacteristicNotifyStateChangedEventArgs>? _notifyStateSub;
+  StreamSubscription<GATTCharacteristicNotifyStateChangedEventArgs>?
+  _notifyStateSub;
 
   /// Initialize the GATT server and add the service
   Future<void> start() async {
@@ -102,7 +103,7 @@ class GattServer implements TransportLink {
     // Check BLE state and setup if ready
     final state = _peripheral.state;
     _log('Current BLE state: $state');
-    
+
     if (state == BluetoothLowEnergyState.poweredOn) {
       await _trySetupService();
     } else {
@@ -113,7 +114,7 @@ class GattServer implements TransportLink {
 
   Future<void> _trySetupService() async {
     if (_isRunning) return;
-    
+
     try {
       // Create the GATT service
       await _setupGattService();
@@ -135,9 +136,7 @@ class GattServer implements TransportLink {
         GATTCharacteristicProperty.write,
         GATTCharacteristicProperty.writeWithoutResponse,
       ],
-      permissions: [
-        GATTCharacteristicPermission.write,
-      ],
+      permissions: [GATTCharacteristicPermission.write],
       descriptors: [],
     );
 
@@ -148,9 +147,7 @@ class GattServer implements TransportLink {
         GATTCharacteristicProperty.notify,
         GATTCharacteristicProperty.read,
       ],
-      permissions: [
-        GATTCharacteristicPermission.read,
-      ],
+      permissions: [GATTCharacteristicPermission.read],
       descriptors: [],
     );
 
@@ -159,10 +156,7 @@ class GattServer implements TransportLink {
       uuid: kChatServiceUuid,
       isPrimary: true,
       includedServices: [],
-      characteristics: [
-        _rxCharacteristic!,
-        _txCharacteristic!,
-      ],
+      characteristics: [_rxCharacteristic!, _txCharacteristic!],
     );
 
     // Remove any existing services first
@@ -180,7 +174,9 @@ class GattServer implements TransportLink {
     });
 
     // Listen for notify state changes on TX characteristic
-    _notifyStateSub = _peripheral.characteristicNotifyStateChanged.listen((event) {
+    _notifyStateSub = _peripheral.characteristicNotifyStateChanged.listen((
+      event,
+    ) {
       if (event.characteristic.uuid == kTxCharacteristicUuid) {
         _log('TX notify state changed: ${event.state}');
         // On iOS, we detect connection via notify subscription
@@ -199,7 +195,7 @@ class GattServer implements TransportLink {
   void _handleWriteRequest(GATTCharacteristicWriteRequestedEventArgs event) {
     final bytes = Uint8List.fromList(event.request.value);
     _log('RX: ${bytes.length} bytes from Central');
-    
+
     // Respond to the write request
     _peripheral.respondWriteRequest(event.request);
 
@@ -223,13 +219,13 @@ class GattServer implements TransportLink {
       if (state == BluetoothLowEnergyState.poweredOn) {
         await _trySetupService();
       }
-      
+
       // If still not running, throw
       if (!_isRunning) {
         throw StateError('Server not started - is Bluetooth enabled?');
       }
     }
-    
+
     if (_isAdvertising) {
       _log('Already advertising');
       return;
@@ -258,10 +254,9 @@ class GattServer implements TransportLink {
 
   /// Send data to the connected Central via TX notification
   @override
-  void send(String from, Uint8List bytes) {
+  Future<void> send(Uint8List bytes) async {
     if (_txCharacteristic == null || _connectedCentral == null) {
-      _log('TX: cannot send - no connected central or characteristic');
-      return;
+      throw StateError('cannot send: no connected central or characteristic');
     }
 
     _log('TX: ${bytes.length} bytes to Central');
@@ -289,7 +284,7 @@ class GattServer implements TransportLink {
     _log('Stopping GATT Server...');
 
     await stopAdvertising();
-    
+
     await _stateSub?.cancel();
     await _connectionSub?.cancel();
     await _writeSub?.cancel();

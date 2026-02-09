@@ -1,5 +1,5 @@
 /// GATT Client for PRSM Chat (Central Role)
-/// 
+///
 /// This implements the Central side of the BLE transport:
 /// - Scans for and connects to Peripherals hosting the Chat service
 /// - Writes data to RX characteristic (send to Peripheral)
@@ -32,16 +32,14 @@ class DiscoveredPeripheral {
 
 /// GATT Client that connects to PRSM Chat Peripherals
 class GattClient implements TransportLink {
-  GattClient({
-    void Function(String)? logger,
-  }) : _logger = logger;
+  GattClient({void Function(String)? logger}) : _logger = logger;
 
   final void Function(String)? _logger;
   final CentralManager _central = CentralManager();
 
   // Connected peripheral
   Peripheral? _connectedPeripheral;
-  
+
   // Discovered characteristics
   GATTCharacteristic? _rxCharacteristic;
   GATTCharacteristic? _txCharacteristic;
@@ -52,9 +50,12 @@ class GattClient implements TransportLink {
   bool _isConnected = false;
 
   // Streams
-  final StreamController<Uint8List> _inboundController = StreamController.broadcast();
-  final StreamController<DiscoveredPeripheral> _discoveredController = StreamController.broadcast();
-  final StreamController<bool> _connectionController = StreamController.broadcast();
+  final StreamController<Uint8List> _inboundController =
+      StreamController.broadcast();
+  final StreamController<DiscoveredPeripheral> _discoveredController =
+      StreamController.broadcast();
+  final StreamController<bool> _connectionController =
+      StreamController.broadcast();
 
   /// Stream of inbound data from Peripheral
   Stream<Uint8List> get inbound => _inboundController.stream;
@@ -139,9 +140,9 @@ class GattClient implements TransportLink {
     // Set up discovery listener
     _discoverySub = _central.discovered.listen((event) {
       // Check if this peripheral advertises our service
-      final hasService = event.advertisement.serviceUUIDs?.any(
+      final hasService = event.advertisement.serviceUUIDs.any(
         (uuid) => uuid == kChatServiceUuid,
-      ) ?? false;
+      );
 
       if (hasService) {
         final discovered = DiscoveredPeripheral(
@@ -149,15 +150,15 @@ class GattClient implements TransportLink {
           rssi: event.rssi,
           name: event.advertisement.name,
         );
-        _log('Discovered: ${discovered.name ?? event.peripheral.uuid} (RSSI: ${discovered.rssi})');
+        _log(
+          'Discovered: ${discovered.name ?? event.peripheral.uuid} (RSSI: ${discovered.rssi})',
+        );
         _discoveredController.add(discovered);
       }
     });
 
     // Start scanning with service filter
-    await _central.startDiscovery(
-      serviceUUIDs: [kChatServiceUuid],
-    );
+    await _central.startDiscovery(serviceUUIDs: [kChatServiceUuid]);
 
     _isScanning = true;
     _log('Scan started');
@@ -248,7 +249,6 @@ class GattClient implements TransportLink {
 
       _connectionController.add(true);
       _log('Connection complete, ready for data transfer');
-
     } catch (e) {
       _log('Connection failed: $e');
       _handleDisconnect();
@@ -265,23 +265,22 @@ class GattClient implements TransportLink {
 
   /// Send data to the connected Peripheral via RX write
   @override
-  void send(String from, Uint8List bytes) {
-    if (!_isConnected || _connectedPeripheral == null || _rxCharacteristic == null) {
-      _log('Cannot send: not connected');
-      return;
+  Future<void> send(Uint8List bytes) async {
+    if (!_isConnected ||
+        _connectedPeripheral == null ||
+        _rxCharacteristic == null) {
+      throw StateError('cannot send: not connected');
     }
 
     _log('TX: ${bytes.length} bytes to Peripheral');
 
     // Write to RX characteristic
-    _central.writeCharacteristic(
+    await _central.writeCharacteristic(
       _connectedPeripheral!,
       _rxCharacteristic!,
       value: bytes,
       type: GATTCharacteristicWriteType.withResponse,
-    ).catchError((e) {
-      _log('Write error: $e');
-    });
+    );
   }
 
   /// Disconnect from the current Peripheral
@@ -333,11 +332,11 @@ class GattClient implements TransportLink {
   Future<void> dispose() async {
     await stopScan();
     await disconnect();
-    
+
     await _stateSub?.cancel();
     await _connectionSub?.cancel();
     await _notifySub?.cancel();
-    
+
     await _inboundController.close();
     await _discoveredController.close();
     await _connectionController.close();

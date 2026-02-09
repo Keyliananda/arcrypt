@@ -29,13 +29,13 @@ Future<void> main(List<String> args) async {
 
   final endpointA = TransportEndpoint(
     name: 'A',
-    link: link,
+    link: ScopedTransportLink(endpointId: 'A', link: link),
     config: transportConfig,
     logger: config.verbose ? _logger : null,
   );
   final endpointB = TransportEndpoint(
     name: 'B',
-    link: link,
+    link: ScopedTransportLink(endpointId: 'B', link: link),
     config: transportConfig,
     logger: config.verbose ? _logger : null,
   );
@@ -109,14 +109,20 @@ void _printStats(
   final a = endpointA.stats;
   final b = endpointB.stats;
   print('');
-  print('Stats A: sent=${a.packetsSent} recv=${a.packetsReceived} '
-      'retransmits=${a.retransmissions} dup=${a.duplicatePackets} '
-      'protoErr=${a.protocolErrors} ackTimeouts=${a.ackTimeouts}');
-  print('Stats B: sent=${b.packetsSent} recv=${b.packetsReceived} '
-      'retransmits=${b.retransmissions} dup=${b.duplicatePackets} '
-      'protoErr=${b.protocolErrors} ackTimeouts=${b.ackTimeouts}');
-  print('Link: sent=${link.stats.sent} delivered=${link.stats.delivered} '
-      'dropped=${link.stats.dropped}');
+  print(
+    'Stats A: sent=${a.packetsSent} recv=${a.packetsReceived} '
+    'retransmits=${a.retransmissions} dup=${a.duplicatePackets} '
+    'protoErr=${a.protocolErrors} ackTimeouts=${a.ackTimeouts}',
+  );
+  print(
+    'Stats B: sent=${b.packetsSent} recv=${b.packetsReceived} '
+    'retransmits=${b.retransmissions} dup=${b.duplicatePackets} '
+    'protoErr=${b.protocolErrors} ackTimeouts=${b.ackTimeouts}',
+  );
+  print(
+    'Link: sent=${link.stats.sent} delivered=${link.stats.delivered} '
+    'dropped=${link.stats.dropped}',
+  );
 }
 
 void _logger(String message) {
@@ -200,16 +206,16 @@ class LinkStats {
   int droppedFromB = 0;
 }
 
-class MockDuplexLink implements TransportLink {
+class MockDuplexLink implements DirectedTransportLink {
   MockDuplexLink({
     required this.endpointA,
     required this.endpointB,
     required double dropRate,
     required Duration delay,
     required Random rng,
-  })  : _dropRate = dropRate,
-        _delay = delay,
-        _rng = rng;
+  }) : _dropRate = dropRate,
+       _delay = delay,
+       _rng = rng;
 
   final String endpointA;
   final String endpointB;
@@ -227,7 +233,7 @@ class MockDuplexLink implements TransportLink {
   }
 
   @override
-  void send(String from, Uint8List bytes) {
+  Future<void> sendFrom(String from, Uint8List bytes) async {
     final to = _other(from);
     if (to == null) {
       return;
@@ -333,7 +339,8 @@ class HarnessConfig {
         seed = int.parse(arg.split('=').last);
       } else if (arg.startsWith('--sizes=')) {
         payloadSizes = arg
-            .split('=').last
+            .split('=')
+            .last
             .split(',')
             .where((value) => value.trim().isNotEmpty)
             .map(int.parse)

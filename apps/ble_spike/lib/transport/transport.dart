@@ -64,7 +64,23 @@ class TransportPacket {
 }
 
 abstract class TransportLink {
-  void send(String from, Uint8List bytes);
+  Future<void> send(Uint8List bytes);
+}
+
+abstract class DirectedTransportLink {
+  Future<void> sendFrom(String from, Uint8List bytes);
+}
+
+class ScopedTransportLink implements TransportLink {
+  const ScopedTransportLink({required this.endpointId, required this.link});
+
+  final String endpointId;
+  final DirectedTransportLink link;
+
+  @override
+  Future<void> send(Uint8List bytes) {
+    return link.sendFrom(endpointId, bytes);
+  }
 }
 
 class TransportStats {
@@ -221,7 +237,12 @@ class TransportEndpoint {
     var attempts = 0;
     while (true) {
       attempts++;
-      _sendPacket(packet);
+      try {
+        await _sendPacket(packet);
+      } catch (e) {
+        _inFlight = null;
+        throw TransportException('link send failed: $e');
+      }
       final acked = await _waitForAck(completer.future, config.ackTimeout);
       if (acked) {
         return;
@@ -243,14 +264,14 @@ class TransportEndpoint {
     return result;
   }
 
-  void _sendPacket(TransportPacket packet) {
+  Future<void> _sendPacket(TransportPacket packet) async {
     _stats.packetsSent++;
     if (packet.type == kTypeData) {
       _stats.dataPacketsSent++;
     } else if (packet.type == kTypeAck) {
       _stats.ackPacketsSent++;
     }
-    link.send(name, packet.encode());
+    await link.send(packet.encode());
   }
 
   void _handleData(TransportPacket packet) {
@@ -318,14 +339,15 @@ class TransportEndpoint {
       seq: seq,
       payload: Uint8List(0),
     );
-    _sendPacket(packet);
+    unawaited(_sendPacket(packet).catchError((_) {}));
   }
 
   void _log(String message) {
-    if (_logger == null) {
+    final logger = _logger;
+    if (logger == null) {
       return;
     }
-    _logger!('[$name] $message');
+    logger('[$name] $message');
   }
 }
 

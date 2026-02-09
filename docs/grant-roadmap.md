@@ -45,14 +45,14 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Stand: 2026-02-09
 - Security-Block abgeschlossen: `SEC-001` bis `SEC-009` in `docs/roadmap-security-v2.md` sind erledigt.
 - Message-Relay-Block abgeschlossen: `SRV-001` bis `SRV-008` in `docs/roadmap-message-relay-v1.md` sind erledigt.
-- Letztes Update: `SRV-007` und `SRV-008` abgeschlossen (Privacy/DSGVO Paket + Deployment Runbook + TLS/HSTS Hardening) in `docs/` und `server/`.
+- Letztes Update: `CLI-001` und `CLI-002` abgeschlossen (Transport-Link-Abstraktion + HTTP RelayLink mit push/pull/ack, retry/backoff/timeouts) in `apps/ble_spike/` und `docs/`.
 - Naechster auszufuehrender Block nach Regel "Naechster Task": `CLI-*` aus `docs/roadmap-client-remote-transport-v1.md`.
-- Naechster konkreter Task: `CLI-001` (erster offener Punkt in `docs/roadmap-client-remote-transport-v1.md`).
+- Naechster konkreter Task: `CLI-003` (erster offener Punkt in `docs/roadmap-client-remote-transport-v1.md`).
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
 - [x] SRV-001..SRV-008 : siehe `docs/roadmap-message-relay-v1.md` (done 2026-02-09)
-- [ ] CLI-001.. : siehe `docs/roadmap-client-remote-transport-v1.md`
+- [ ] CLI-003.. : siehe `docs/roadmap-client-remote-transport-v1.md`
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)
 Diese Formulierungen sollen identisch behandelt werden wie "fuehre den naechsten Task aus":
