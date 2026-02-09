@@ -1,13 +1,13 @@
-# Art.-30 Verarbeitungsverzeichnis (Entwurf, PRIV-003)
+# Art.-30 Verarbeitungsverzeichnis (v1, PRIV-003)
 
 Stand: 2026-02-09  
 Zuordnung: `PRIV-003` aus `docs/grant-roadmap.md`
 
 ## 1) Verantwortlicher
-- Organisation: `TBD`
-- Adresse: `TBD`
-- Kontakt E-Mail: `TBD`
-- Datenschutzkontakt (falls vorhanden): `TBD`
+- Organisation: PRSM Projekt (Betreiber: Kilian Volz)
+- Adresse: Betreiberanschrift in Deutschland (ausserhalb des Repos gepflegt)
+- Kontakt E-Mail: kilian@piano-volz.de
+- Datenschutzkontakt (falls vorhanden): kilian@piano-volz.de
 
 ## 2) Verarbeitungstaetigkeit
 - Name: Store-and-Forward Message Relay + Wake Trigger
@@ -30,9 +30,9 @@ Zuordnung: `PRIV-003` aus `docs/grant-roadmap.md`
 - Apple APNs (technischer Push-Dienst fuer Wake)
 
 ## 6) Drittlandtransfer
-- APNs Transferpruefung: `TBD`
-- Hoster-Standorte: `TBD`
-- Rechtsgrundlage fuer Transfers: `TBD`
+- APNs Transferpruefung: moeglicher Drittlandbezug (insb. USA) bei Apple Push Notification Service.
+- Hoster-Standorte: EU/EWR-only als Projektvorgabe; vertragliche Bestaetigung wird in `PRIV-002` abgeschlossen.
+- Rechtsgrundlage fuer Transfers: Art. 46 DSGVO (geeignete Garantien, z. B. SCC) bzw. Angemessenheitsbeschluss, soweit anwendbar.
 
 ## 7) Loeschfristen / Retention
 - `relay_messages`: bis Expiry oder ACK + Grace (`RELAY_ACK_DELETE_GRACE_SEC`)
@@ -48,16 +48,15 @@ Zuordnung: `PRIV-003` aus `docs/grant-roadmap.md`
 - Rate Limits pro Scope
 - Datenminimierung: keine Accounts, kein Klartextinhalt
 
-## 9) Rechtsgrundlage (durch Betreiber zu finalisieren)
-- Primare Grundlage: `TBD`
-- Betroffene Services/Funktionen: `TBD`
+## 9) Rechtsgrundlage
+- Primare Grundlage: Art. 6 Abs. 1 lit. b DSGVO (Bereitstellung Messaging/Wake) und Art. 6 Abs. 1 lit. f DSGVO (Missbrauchsschutz, Rate-Limits, Betriebssicherheit).
+- Betroffene Services/Funktionen: `server/` Endpunkte `/v1/mailbox/*`, `/v1/wake`, `/v1/register`, `/v1/unregister`.
 
 ## 10) Offene Felder vor Finalisierung
-- Verantwortlichen-Stammdaten eintragen
-- Hoster- und Drittlandangaben vertraglich bestaetigen
-- Rechtsgrundlage final abstimmen
+- Externe Hoster-Nachweise aus `PRIV-002` als Referenz anhaengen (AVV/SLA).
+- Bei Betreiberwechsel die Stammdaten in Abschnitt 1 aktualisieren.
 
 ## DoD fuer PRIV-003 (Art.-30 Teil)
-- Alle `TBD` Felder ersetzt.
+- Keine Platzhalterfelder offen.
 - Version mit Datum freigegeben.
 - `docs/grant-roadmap.md` Update erfolgt.

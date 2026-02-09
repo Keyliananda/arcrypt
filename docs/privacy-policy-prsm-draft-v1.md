@@ -1,12 +1,12 @@
 # Privacy Policy Draft (PRSM, PRIV-003)
 
 Stand: 2026-02-09  
-Status: Entwurf, nicht final
+Status: v1 erstellt; vertragliche Hoster-Nachweise laufen separat in `PRIV-002`
 
 ## 1) Verantwortliche Stelle
-- Name/Firma: `TBD`
-- Anschrift: `TBD`
-- Kontakt: `TBD`
+- Name/Firma: PRSM Projekt (Betreiber: Kilian Volz)
+- Anschrift: Betreiberanschrift in Deutschland (wird ausserhalb des Repos gepflegt)
+- Kontakt: kilian@piano-volz.de
 
 ## 2) Welche Daten wir verarbeiten
 Wir verarbeiten nur Daten, die fuer den Betrieb des verschluesselten Nachrichtendiensts erforderlich sind:
@@ -22,8 +22,9 @@ Nachrichteninhalte liegen auf dem Server nur als Ciphertext vor.
 - Missbrauchsschutz und Betriebssicherheit (Rate Limits, Replay-Schutz)
 
 ## 4) Rechtsgrundlagen
-Rechtsgrundlagen werden durch den Betreiber final eingetragen.  
-Aktueller Platzhalter: `TBD`.
+Wir verarbeiten Daten auf Basis von:
+- Art. 6 Abs. 1 lit. b DSGVO (Bereitstellung der Messaging-/Wake-Funktion),
+- Art. 6 Abs. 1 lit. f DSGVO (Missbrauchsschutz, Rate-Limits, Betriebssicherheit).
 
 ## 5) Speicherdauer
 - Nachrichten werden bei Ablauf (`expires_at`) oder nach ACK + Grace geloescht.
@@ -39,7 +40,8 @@ Details: `docs/privacy-dsgvo-message-relay-v1.md`.
 Vertragliche Details (AVV/DPA) werden separat gepflegt: `docs/hoster-avv-dpa-checklist.md`.
 
 ## 7) Drittlandtransfer
-Einsatz und Rechtsgrundlagen fuer Drittlandtransfers werden durch den Betreiber final dokumentiert (`TBD`).
+Fuer APNs kann ein Drittlandbezug (insb. USA) bestehen.  
+Rechtsgrundlage sind geeignete Garantien nach Art. 46 DSGVO (z. B. SCC) bzw. ein anwendbarer Angemessenheitsbeschluss.
 
 ## 8) Betroffenenrechte
 Betroffene koennen Auskunft, Berichtigung, Loeschung und Einschraenkung anfragen.  
@@ -54,8 +56,8 @@ Wir setzen technische und organisatorische Massnahmen ein, u. a.:
 - Datenminimierung und kurze Retention.
 
 ## 10) Kontakt fuer Datenschutzanfragen
-- E-Mail: `TBD`
-- Prozessinternes Ticketing: `TBD`
+- E-Mail: kilian@piano-volz.de
+- Prozessinternes Ticketing: `security-incident-<date>-<id>` / `privacy-request-<date>-<id>`
 
 ## 11) Aenderungen dieser Datenschutzhinweise
 Diese Hinweise koennen aktualisiert werden, wenn sich Funktionen, Rechtsgrundlagen oder Empfaenger aendern.  
