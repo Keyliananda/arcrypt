@@ -430,10 +430,21 @@ class RelayLink implements TransportLink {
 
   @override
   Future<void> send(Uint8List bytes) async {
-    await _client.push(
+    await pushCiphertext(bytes);
+  }
+
+  Future<RelayPushResult> pushCiphertext(
+    Uint8List bytes, {
+    String? clientMsgId,
+    int? expiresInSec,
+    Uint8List? padding,
+  }) {
+    return _client.push(
       mailboxId: outboundMailboxId,
       ciphertext: bytes,
-      clientMsgId: _nextClientMsgId(),
+      expiresInSec: expiresInSec,
+      clientMsgId: clientMsgId ?? _nextClientMsgId(),
+      padding: padding,
     );
   }
 

@@ -5,7 +5,7 @@ Ziel: Client kann Nachrichten sowohl ueber BLE (nahe) als auch ueber Internet (r
 ## Taskliste (in Reihenfolge)
 - [x] CLI-001: Link-Abstraktion finalisieren: `TransportLink` erweitern/sauber halten, so dass BLE und Relay identisch nutzbar sind. (done 2026-02-09; updated `apps/ble_spike/lib/transport/transport.dart`, `apps/ble_spike/lib/ble/gatt_client.dart`, `apps/ble_spike/lib/ble/gatt_server.dart`, `apps/ble_spike/lib/ble_chat_bridge.dart`, `apps/ble_spike/tool/transport_harness.dart`)
 - [x] CLI-002: RelayLink entwerfen (HTTP zuerst, optional WebSocket spaeter): push/pull/ack Calls, Retry/Backoff, timeouts. (done 2026-02-09; added `apps/ble_spike/lib/transport/relay_link.dart`; covered by `apps/ble_spike/test/relay_link_test.dart`)
-- [ ] CLI-003: Persistente Outbox implementieren (send pending ueber Restarts), inkl. idempotentem Resend (keine Double-Sends).
+- [x] CLI-003: Persistente Outbox implementieren (send pending ueber Restarts), inkl. idempotentem Resend (keine Double-Sends). (done 2026-02-09; added `apps/ble_spike/lib/transport/relay_outbox.dart`, updated `apps/ble_spike/lib/transport/relay_link.dart`, added `apps/ble_spike/test/relay_outbox_test.dart`)
 - [ ] CLI-004: Persistente Inbox + Dedupe implementieren (message_id), out-of-order tolerant.
 - [ ] CLI-005: Polling-Loop implementieren (Intervall + jitter), “pull-delete” oder ack-flows passend zu SRV-API.
 - [ ] CLI-006: Wake Integration: bei Push ein Wake triggern (wenn Token vorhanden), und nach Wake sofort pollen.
