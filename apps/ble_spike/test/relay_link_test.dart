@@ -84,6 +84,209 @@ void main() {
     expect(result.expiresAt, DateTime.parse('2026-02-10T12:00:00Z'));
   });
 
+  test('wake retries once and sends valid proof', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    var attempts = 0;
+    var proofWasValid = false;
+
+    unawaited(
+      server.listen((request) async {
+        final bodyText = await utf8.decoder.bind(request).join();
+        final body = jsonDecode(bodyText) as Map<String, dynamic>;
+        attempts++;
+
+        final expectedProof = computeWakeProof(
+          hmacSecret: 'wake-secret',
+          token: body['token'] as String,
+          ts: body['ts'] as int,
+        );
+        proofWasValid = body['proof'] == expectedProof;
+
+        if (attempts == 1) {
+          request.response.statusCode = 503;
+          request.response.write('{"ok":false,"error":"relay_unavailable"}');
+        } else {
+          request.response.statusCode = 202;
+          request.response.write(
+            '{"ok":true,"status":"queued","apns":{"status":"sent","http_status":200}}',
+          );
+        }
+        await request.response.close();
+      }).asFuture<void>(),
+    );
+
+    final wakeClient = RelayWakeHttpClient(
+      config: RelayWakeConfig(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        hmacSecret: 'wake-secret',
+        requestTimeout: const Duration(seconds: 2),
+        maxRetries: 2,
+        initialBackoff: const Duration(milliseconds: 5),
+        maxBackoff: const Duration(milliseconds: 10),
+        jitterFactor: 0,
+        random: Random(9),
+        now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+      ),
+    );
+    addTearDown(() => wakeClient.close(force: true));
+
+    final result = await wakeClient.wake(token: 'peer-token');
+
+    expect(attempts, 2);
+    expect(proofWasValid, isTrue);
+    expect(result.status, 'queued');
+    expect(result.apns?['status'], 'sent');
+  });
+
+  test(
+    'relay link push triggers optional wake when peer token is configured',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      final paths = <String>[];
+      final wakeStatuses = <String>[];
+
+      unawaited(
+        server.listen((request) async {
+          paths.add(request.uri.path);
+          if (request.uri.path == '/v1/mailbox/push') {
+            request.response.statusCode = 202;
+            request.response.write(
+              '{"ok":true,"message_id":"msg_push","expires_at":"2026-02-10T12:00:00Z","status":"queued"}',
+            );
+          } else if (request.uri.path == '/v1/wake') {
+            request.response.statusCode = 202;
+            request.response.write('{"ok":true,"status":"sent"}');
+          } else {
+            request.response.statusCode = 404;
+            request.response.write('{"ok":false,"error":"not_found"}');
+          }
+          await request.response.close();
+        }).asFuture<void>(),
+      );
+
+      final mailboxClient = RelayMailboxHttpClient(
+        config: RelayLinkConfig(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+          requestTimeout: const Duration(seconds: 2),
+          maxRetries: 1,
+          initialBackoff: const Duration(milliseconds: 5),
+          maxBackoff: const Duration(milliseconds: 10),
+          jitterFactor: 0,
+          random: Random(31),
+          now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+        ),
+      );
+      final wakeClient = RelayWakeHttpClient(
+        config: RelayWakeConfig(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+          hmacSecret: 'wake-secret',
+          requestTimeout: const Duration(seconds: 2),
+          maxRetries: 1,
+          initialBackoff: const Duration(milliseconds: 5),
+          maxBackoff: const Duration(milliseconds: 10),
+          jitterFactor: 0,
+          random: Random(33),
+          now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+        ),
+      );
+      addTearDown(() => mailboxClient.close(force: true));
+      addTearDown(() => wakeClient.close(force: true));
+
+      final relayLink = RelayLink(
+        client: mailboxClient,
+        outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+        inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+        wakeClient: wakeClient,
+        peerWakeToken: 'peer-token',
+        onWakeResult: (result) => wakeStatuses.add(result.status),
+      );
+
+      final pushResult = await relayLink.pushCiphertext(
+        Uint8List.fromList(<int>[1, 2, 3]),
+        clientMsgId: 'cid-push',
+      );
+
+      expect(pushResult.messageId, 'msg_push');
+      expect(paths, <String>['/v1/mailbox/push', '/v1/wake']);
+      expect(wakeStatuses, <String>['sent']);
+    },
+  );
+
+  test('relay link push keeps success when wake fails', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    final wakeErrors = <Object>[];
+
+    unawaited(
+      server.listen((request) async {
+        if (request.uri.path == '/v1/mailbox/push') {
+          request.response.statusCode = 202;
+          request.response.write(
+            '{"ok":true,"message_id":"msg_push","expires_at":"2026-02-10T12:00:00Z","status":"queued"}',
+          );
+        } else if (request.uri.path == '/v1/wake') {
+          request.response.statusCode = 500;
+          request.response.write('{"ok":false,"error":"temporary"}');
+        } else {
+          request.response.statusCode = 404;
+          request.response.write('{"ok":false,"error":"not_found"}');
+        }
+        await request.response.close();
+      }).asFuture<void>(),
+    );
+
+    final mailboxClient = RelayMailboxHttpClient(
+      config: RelayLinkConfig(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        requestTimeout: const Duration(seconds: 2),
+        maxRetries: 1,
+        initialBackoff: const Duration(milliseconds: 5),
+        maxBackoff: const Duration(milliseconds: 10),
+        jitterFactor: 0,
+        random: Random(35),
+        now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+      ),
+    );
+    final wakeClient = RelayWakeHttpClient(
+      config: RelayWakeConfig(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        hmacSecret: 'wake-secret',
+        requestTimeout: const Duration(seconds: 2),
+        maxRetries: 0,
+        initialBackoff: const Duration(milliseconds: 5),
+        maxBackoff: const Duration(milliseconds: 10),
+        jitterFactor: 0,
+        random: Random(37),
+        now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+      ),
+    );
+    addTearDown(() => mailboxClient.close(force: true));
+    addTearDown(() => wakeClient.close(force: true));
+
+    final relayLink = RelayLink(
+      client: mailboxClient,
+      outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+      inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+      wakeClient: wakeClient,
+      peerWakeToken: 'peer-token',
+      onWakeError: (error, _) => wakeErrors.add(error),
+    );
+
+    final pushResult = await relayLink.pushCiphertext(
+      Uint8List.fromList(<int>[4, 5, 6]),
+      clientMsgId: 'cid-push-fail-wake',
+    );
+
+    expect(pushResult.messageId, 'msg_push');
+    expect(wakeErrors, hasLength(1));
+    expect(wakeErrors.first, isA<RelayLinkException>());
+  });
+
   test('relay link pollOnce pulls, emits inbound bytes, and acks', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));
@@ -365,6 +568,83 @@ void main() {
       Uint8List.fromList(<int>[3, 4]),
     ]);
   });
+
+  test(
+    'relay polling loop polls immediately and schedules follow-up on wake',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      var pullCount = 0;
+      final reachedSecondPull = Completer<void>();
+
+      unawaited(
+        server.listen((request) async {
+          if (request.uri.path == '/v1/mailbox/pull') {
+            pullCount++;
+            if (pullCount >= 2 && !reachedSecondPull.isCompleted) {
+              reachedSecondPull.complete();
+            }
+            request.response.statusCode = 200;
+            request.response.write(
+              '{"ok":true,"messages":[],"next_cursor":null,"has_more":false}',
+            );
+          } else if (request.uri.path == '/v1/mailbox/ack') {
+            fail('ack must not be called when there are no pulled messages');
+          } else {
+            request.response.statusCode = 404;
+            request.response.write('{"ok":false,"error":"not_found"}');
+          }
+          await request.response.close();
+        }).asFuture<void>(),
+      );
+
+      final client = RelayMailboxHttpClient(
+        config: RelayLinkConfig(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+          requestTimeout: const Duration(seconds: 2),
+          maxRetries: 1,
+          initialBackoff: const Duration(milliseconds: 5),
+          maxBackoff: const Duration(milliseconds: 10),
+          jitterFactor: 0,
+          random: Random(41),
+          now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+        ),
+      );
+      addTearDown(() => client.close(force: true));
+
+      final relayLink = RelayLink(
+        client: client,
+        outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+        inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+        defaultAutoAck: true,
+      );
+      final poller = RelayPollingLoop(
+        link: relayLink,
+        config: const RelayPollingConfig(
+          interval: Duration(seconds: 30),
+          jitterFactor: 0,
+          pollImmediately: false,
+          maxBurstPerTick: 1,
+          wakeFollowUpEnabled: true,
+          wakeFollowUpMinDelay: Duration(milliseconds: 20),
+          wakeFollowUpMaxDelay: Duration(milliseconds: 20),
+        ),
+        random: Random(43),
+      );
+      addTearDown(() => poller.stop());
+
+      poller.start();
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(pullCount, 0);
+
+      await poller.onWakeSignal();
+      await reachedSecondPull.future.timeout(const Duration(seconds: 2));
+      await poller.stop();
+
+      expect(pullCount, greaterThanOrEqualTo(2));
+    },
+  );
 
   test('computeJitteredInterval stays inside configured bounds', () {
     final random = _SequenceRandom(Queue<int>.from(<int>[0, 200]));

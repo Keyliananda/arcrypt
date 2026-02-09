@@ -124,6 +124,13 @@ class RelayPollResult {
   final RelayAckResult? ack;
 }
 
+class RelayWakeResult {
+  RelayWakeResult({required this.status, this.apns});
+
+  final String status;
+  final Map<String, dynamic>? apns;
+}
+
 class RelayPollingConfig {
   const RelayPollingConfig({
     this.interval = const Duration(seconds: 8),
@@ -131,6 +138,9 @@ class RelayPollingConfig {
     this.pollImmediately = true,
     this.maxBurstPerTick = 4,
     this.errorRetryDelay = const Duration(seconds: 2),
+    this.wakeFollowUpEnabled = true,
+    this.wakeFollowUpMinDelay = const Duration(seconds: 2),
+    this.wakeFollowUpMaxDelay = const Duration(seconds: 5),
   });
 
   final Duration interval;
@@ -138,6 +148,9 @@ class RelayPollingConfig {
   final bool pollImmediately;
   final int maxBurstPerTick;
   final Duration errorRetryDelay;
+  final bool wakeFollowUpEnabled;
+  final Duration wakeFollowUpMinDelay;
+  final Duration wakeFollowUpMaxDelay;
 }
 
 class RelayPollingLoop {
@@ -166,7 +179,9 @@ class RelayPollingLoop {
   bool _running = false;
   String? _cursor;
   Timer? _timer;
+  Timer? _wakeFollowUpTimer;
   Future<void>? _activeCycle;
+  bool _immediateCycleRequested = false;
 
   bool get isRunning => _running;
 
@@ -186,6 +201,27 @@ class RelayPollingLoop {
         config.errorRetryDelay,
         'config.errorRetryDelay',
         'must be >= 0',
+      );
+    }
+    if (config.wakeFollowUpMinDelay.isNegative) {
+      throw ArgumentError.value(
+        config.wakeFollowUpMinDelay,
+        'config.wakeFollowUpMinDelay',
+        'must be >= 0',
+      );
+    }
+    if (config.wakeFollowUpMaxDelay.isNegative) {
+      throw ArgumentError.value(
+        config.wakeFollowUpMaxDelay,
+        'config.wakeFollowUpMaxDelay',
+        'must be >= 0',
+      );
+    }
+    if (config.wakeFollowUpMaxDelay < config.wakeFollowUpMinDelay) {
+      throw ArgumentError.value(
+        config.wakeFollowUpMaxDelay,
+        'config.wakeFollowUpMaxDelay',
+        'must be >= config.wakeFollowUpMinDelay',
       );
     }
     if (config.jitterFactor < 0 || config.jitterFactor > 1) {
@@ -211,6 +247,8 @@ class RelayPollingLoop {
     _running = false;
     _timer?.cancel();
     _timer = null;
+    _wakeFollowUpTimer?.cancel();
+    _wakeFollowUpTimer = null;
     final activeCycle = _activeCycle;
     if (activeCycle != null) {
       await activeCycle;
@@ -224,9 +262,24 @@ class RelayPollingLoop {
     _timer?.cancel();
     _timer = null;
     if (_activeCycle != null) {
+      _immediateCycleRequested = true;
       return;
     }
     await _runCycle();
+  }
+
+  Future<void> onWakeSignal() async {
+    if (!_running) {
+      return;
+    }
+    await triggerNow();
+    if (!config.wakeFollowUpEnabled) {
+      return;
+    }
+    _wakeFollowUpTimer?.cancel();
+    _wakeFollowUpTimer = Timer(_computeWakeFollowUpDelay(), () {
+      unawaited(triggerNow());
+    });
   }
 
   void _scheduleNext({required bool initial, required bool hadError}) {
@@ -278,8 +331,23 @@ class RelayPollingLoop {
       onError?.call(error, stackTrace);
     } finally {
       _activeCycle = null;
+      if (_immediateCycleRequested && _running) {
+        _immediateCycleRequested = false;
+        unawaited(_runCycle());
+        return;
+      }
       _scheduleNext(initial: false, hadError: hadError);
     }
+  }
+
+  Duration _computeWakeFollowUpDelay() {
+    final minMs = config.wakeFollowUpMinDelay.inMilliseconds;
+    final maxMs = config.wakeFollowUpMaxDelay.inMilliseconds;
+    if (maxMs <= minMs) {
+      return Duration(milliseconds: minMs);
+    }
+    final offsetMs = _random.nextInt(maxMs - minMs + 1);
+    return Duration(milliseconds: minMs + offsetMs);
   }
 
   void _log(String message) {
@@ -590,6 +658,192 @@ class RelayMailboxHttpClient {
   }
 }
 
+class RelayWakeConfig {
+  const RelayWakeConfig({
+    required this.baseUri,
+    required this.hmacSecret,
+    this.requestTimeout = const Duration(seconds: 5),
+    this.maxRetries = 3,
+    this.initialBackoff = const Duration(milliseconds: 250),
+    this.maxBackoff = const Duration(seconds: 3),
+    this.jitterFactor = 0.2,
+    this.random,
+    this.now,
+  });
+
+  final Uri baseUri;
+  final String hmacSecret;
+  final Duration requestTimeout;
+  final int maxRetries;
+  final Duration initialBackoff;
+  final Duration maxBackoff;
+  final double jitterFactor;
+  final Random? random;
+  final DateTime Function()? now;
+}
+
+class RelayWakeHttpClient {
+  RelayWakeHttpClient({
+    required RelayWakeConfig config,
+    void Function(String message)? logger,
+    HttpClient? httpClient,
+  }) : _config = config,
+       _logger = logger,
+       _httpClient = httpClient ?? HttpClient();
+
+  final RelayWakeConfig _config;
+  final void Function(String message)? _logger;
+  final HttpClient _httpClient;
+
+  Future<RelayWakeResult> wake({required String token}) async {
+    if (token.isEmpty) {
+      throw ArgumentError.value(token, 'token', 'must not be empty');
+    }
+    if (_config.hmacSecret.isEmpty) {
+      throw ArgumentError.value(
+        _config.hmacSecret,
+        'hmacSecret',
+        'must not be empty',
+      );
+    }
+
+    var attempt = 0;
+    while (true) {
+      attempt++;
+      final ts = _now().millisecondsSinceEpoch ~/ 1000;
+      final body = <String, dynamic>{
+        'token': token,
+        'ts': ts,
+        'proof': computeWakeProof(
+          hmacSecret: _config.hmacSecret,
+          token: token,
+          ts: ts,
+        ),
+      };
+
+      _log('POST /v1/wake attempt=$attempt');
+      try {
+        final response = await _postJson(path: '/v1/wake', body: body);
+        if (response.statusCode == 202) {
+          final ok = response.json['ok'];
+          if (ok != true) {
+            throw RelayLinkException(
+              'wake response ok=false',
+              statusCode: response.statusCode,
+              errorCode: _readOptionalString(response.json['error']),
+              details: _readOptionalMap(response.json['details']),
+            );
+          }
+          return RelayWakeResult(
+            status: _readRequiredString(response.json, 'status'),
+            apns: _readOptionalMap(response.json['apns']),
+          );
+        }
+
+        final retryable = _isRetryableStatus(response.statusCode);
+        if (!retryable || attempt > _config.maxRetries) {
+          throw RelayLinkException(
+            'wake request failed',
+            statusCode: response.statusCode,
+            errorCode: _readOptionalString(response.json['error']),
+            details: _readOptionalMap(response.json['details']),
+            retryable: retryable,
+          );
+        }
+      } on TimeoutException catch (e) {
+        if (attempt > _config.maxRetries) {
+          throw RelayLinkException(
+            'wake request timeout',
+            retryable: true,
+            cause: e,
+          );
+        }
+      } on SocketException catch (e) {
+        if (attempt > _config.maxRetries) {
+          throw RelayLinkException(
+            'wake socket error',
+            retryable: true,
+            cause: e,
+          );
+        }
+      } on HttpException catch (e) {
+        if (attempt > _config.maxRetries) {
+          throw RelayLinkException(
+            'wake http error',
+            retryable: true,
+            cause: e,
+          );
+        }
+      }
+
+      await Future<void>.delayed(_computeBackoff(attempt));
+    }
+  }
+
+  void close({bool force = false}) {
+    _httpClient.close(force: force);
+  }
+
+  Future<_JsonResponse> _postJson({
+    required String path,
+    required Map<String, dynamic> body,
+  }) async {
+    final uri = _config.baseUri.resolve(path);
+    final request = await _httpClient
+        .postUrl(uri)
+        .timeout(_config.requestTimeout);
+    request.headers.contentType = ContentType.json;
+    request.add(utf8.encode(jsonEncode(body)));
+
+    final response = await request.close().timeout(_config.requestTimeout);
+    final text = await response.transform(utf8.decoder).join();
+    Map<String, dynamic> json;
+    if (text.isEmpty) {
+      json = <String, dynamic>{};
+    } else {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw RelayLinkException('wake response is not a JSON object');
+      }
+      json = decoded;
+    }
+    return _JsonResponse(statusCode: response.statusCode, json: json);
+  }
+
+  bool _isRetryableStatus(int statusCode) {
+    return statusCode == 429 || statusCode >= 500;
+  }
+
+  Duration _computeBackoff(int attempt) {
+    final exponent = attempt - 1;
+    final baseMs =
+        _config.initialBackoff.inMilliseconds * (1 << exponent.clamp(0, 16));
+    var clampedMs = baseMs;
+    if (clampedMs > _config.maxBackoff.inMilliseconds) {
+      clampedMs = _config.maxBackoff.inMilliseconds;
+    }
+    return computeJitteredInterval(
+      baseInterval: Duration(milliseconds: clampedMs),
+      jitterFactor: _config.jitterFactor,
+      random: _random(),
+    );
+  }
+
+  DateTime _now() {
+    final now = _config.now;
+    if (now != null) {
+      return now();
+    }
+    return DateTime.now().toUtc();
+  }
+
+  Random _random() => _config.random ?? Random.secure();
+
+  void _log(String message) {
+    _logger?.call('[RelayWakeHttpClient] $message');
+  }
+}
+
 class RelayLink implements TransportLink {
   RelayLink({
     required RelayMailboxHttpClient client,
@@ -599,6 +853,11 @@ class RelayLink implements TransportLink {
     this.inboxQueue,
     this.defaultAutoAck = true,
     this.defaultPullLimit,
+    this.wakeClient,
+    this.peerWakeToken,
+    this.wakeOnPush = true,
+    this.onWakeResult,
+    this.onWakeError,
     Random? random,
   }) : _client = client,
        _random = random ?? Random.secure();
@@ -610,6 +869,11 @@ class RelayLink implements TransportLink {
   final RelayInboxQueue? inboxQueue;
   final bool defaultAutoAck;
   final int? defaultPullLimit;
+  final RelayWakeHttpClient? wakeClient;
+  final String? peerWakeToken;
+  final bool wakeOnPush;
+  final void Function(RelayWakeResult result)? onWakeResult;
+  final void Function(Object error, StackTrace stackTrace)? onWakeError;
   final Random _random;
 
   @override
@@ -622,14 +886,30 @@ class RelayLink implements TransportLink {
     String? clientMsgId,
     int? expiresInSec,
     Uint8List? padding,
-  }) {
-    return _client.push(
+    String? wakeToken,
+  }) async {
+    final pushResult = await _client.push(
       mailboxId: outboundMailboxId,
       ciphertext: bytes,
       expiresInSec: expiresInSec,
       clientMsgId: clientMsgId ?? _nextClientMsgId(),
       padding: padding,
     );
+    if (wakeOnPush) {
+      final resolvedWakeToken = _resolveWakeToken(overrideToken: wakeToken);
+      if (resolvedWakeToken != null) {
+        final wake = wakeClient;
+        if (wake != null) {
+          try {
+            final wakeResult = await wake.wake(token: resolvedWakeToken);
+            onWakeResult?.call(wakeResult);
+          } catch (error, stackTrace) {
+            onWakeError?.call(error, stackTrace);
+          }
+        }
+      }
+    }
+    return pushResult;
   }
 
   Future<RelayPullResult> pull({String? cursor, int? limit}) {
@@ -687,8 +967,23 @@ class RelayLink implements TransportLink {
     return RelayPollResult(pull: pulled, ack: ackResult);
   }
 
-  void close({bool force = false}) {
+  void close({bool force = false, bool closeWakeClient = true}) {
     _client.close(force: force);
+    if (closeWakeClient) {
+      wakeClient?.close(force: force);
+    }
+  }
+
+  String? _resolveWakeToken({String? overrideToken}) {
+    final token = overrideToken ?? peerWakeToken;
+    if (token == null) {
+      return null;
+    }
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
   }
 
   String _nextClientMsgId() {
@@ -719,6 +1014,15 @@ String computeMailboxProof({
   final canonical = '${method.toUpperCase()}\n$path\n$ts\n$nonce\n$bodySha';
   final mac = Hmac(sha256, utf8.encode(mailboxId));
   return mac.convert(utf8.encode(canonical)).toString();
+}
+
+String computeWakeProof({
+  required String hmacSecret,
+  required String token,
+  required int ts,
+}) {
+  final mac = Hmac(sha256, utf8.encode(hmacSecret));
+  return mac.convert(utf8.encode('$token:$ts')).toString();
 }
 
 String stableJsonEncode(Object? value) {
