@@ -49,9 +49,10 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Naechster auszufuehrender Block nach Regel "Naechster Task": keiner in den aktuellen SEC/SRV/CLI Nebenroadmaps (alle Tasks erledigt).
 - Privacy/DSGVO gestartet: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (siehe `docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09).
 - PRIV-002 in Review: AVV/DPA + Incident-SLA Anfragepaket erstellt (`docs/hoster-avv-dpa-checklist.md`, `docs/hoster-avv-dpa-request-v1.md`, 2026-02-09); vertragliche Bestaetigungen durch Hoster stehen aus.
+- PRIV-002 Vorbereitung intern erweitert: Follow-up-/Antworttracking fuer AVV-01..AVV-08 dokumentiert (`docs/hoster-avv-dpa-checklist.md`, `docs/hoster-avv-dpa-response-log.md`, done 2026-02-09).
 - PRIV-003 abgeschlossen: Art.-30 Eintrag + Privacy Policy v1 mit Betreiber- und Rechtsgrundlagenangaben finalisiert (`docs/art30-record-prsm-v1.md`, `docs/privacy-policy-prsm-draft-v1.md`, done 2026-02-09).
 - Server-Roadmap Phase 3 Luecke geschlossen: Wake-Token TTL + Cleanup-Job implementiert (`server/scripts/cleanup_wake_tokens.js`, `WAKE_TOKEN_TTL_SEC`, done 2026-02-09).
-- Naechster konkreter Task: Hoster-Rueckmeldungen fuer AVV-01..AVV-08 einarbeiten und `PRIV-002` auf done setzen.
+- Naechster konkreter Task: Hoster-Rueckmeldungen fuer AVV-01..AVV-08 im Antwortlog erfassen, Nachweise in die Checkliste uebernehmen und danach `PRIV-002` auf done setzen.
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
@@ -59,7 +60,7 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - [x] CLI-001..CLI-008 : siehe `docs/roadmap-client-remote-transport-v1.md` (done 2026-02-09)
 - [x] SRV-WAKE-CLEANUP: Wake Token TTL + Expiry-Cleanup-Job implementiert (`server/scripts/cleanup_wake_tokens.js`, done 2026-02-09)
 - [x] PRIV-001: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (`docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09)
-- [ ] PRIV-002: AVV/DPA + Incident-SLA mit Hoster finalisieren (extern, vertraglich; in_review via `docs/hoster-avv-dpa-checklist.md` + `docs/hoster-avv-dpa-request-v1.md`, 2026-02-09)
+- [ ] PRIV-002: AVV/DPA + Incident-SLA mit Hoster finalisieren (extern, vertraglich; in_review via `docs/hoster-avv-dpa-checklist.md` + `docs/hoster-avv-dpa-request-v1.md` + `docs/hoster-avv-dpa-response-log.md`, 2026-02-09)
 - [x] PRIV-003: Betreiberdaten fuer Art.-30 Eintrag und Privacy Policy v1 final ergaenzt (`docs/art30-record-prsm-v1.md`, `docs/privacy-policy-prsm-draft-v1.md`, done 2026-02-09)
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)

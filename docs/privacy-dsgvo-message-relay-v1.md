@@ -77,7 +77,7 @@ Verarbeitung: "Store-and-Forward Relay + Wake Trigger"
 
 Vor Produktion abhaken:
 
-Arbeitsdokument: `docs/hoster-avv-dpa-checklist.md` (initial angelegt am 2026-02-09).
+Arbeitsdokumente: `docs/hoster-avv-dpa-checklist.md` und `docs/hoster-avv-dpa-response-log.md` (initial angelegt am 2026-02-09).
 
 - [ ] AVV/DPA mit Hoster abgeschlossen.
 - [ ] Hosting-Region (EU/EWR) dokumentiert.
