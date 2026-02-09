@@ -10,7 +10,7 @@ Ziel: Client kann Nachrichten sowohl ueber BLE (nahe) als auch ueber Internet (r
 - [x] CLI-005: Polling-Loop implementieren (Intervall + jitter), “pull-delete” oder ack-flows passend zu SRV-API. (done 2026-02-09; updated `apps/ble_spike/lib/transport/relay_link.dart`, updated `apps/ble_spike/test/relay_link_test.dart`)
 - [x] CLI-006: Wake Integration: bei Push ein Wake triggern (wenn Token vorhanden), und nach Wake sofort pollen. (done 2026-02-09; updated `apps/ble_spike/lib/transport/relay_link.dart`, updated `apps/ble_spike/test/relay_link_test.dart`)
 - [x] CLI-007: UX Mindestset: “Remote verfuegbar”, “trusted/untrusted”, Fehlerbilder, und “keine stillen Downgrades”. (done 2026-02-09; added `apps/ble_spike/lib/transport/relay_runtime_config.dart`, updated `apps/ble_spike/lib/main.dart`, added `apps/ble_spike/test/relay_runtime_config_test.dart`)
-- [ ] CLI-008: Testpaket: Integrationstests gegen lokalen Server (happy path, offline peer, retries, dedupe).
+- [x] CLI-008: Testpaket: Integrationstests gegen lokalen Server (happy path, offline peer, retries, dedupe). (done 2026-02-09; added `apps/ble_spike/test/relay_link_local_server_integration_test.dart`)
 
 ## Schritte
 1. Transport Abstraktion stabilisieren

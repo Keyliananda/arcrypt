@@ -45,14 +45,14 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Stand: 2026-02-09
 - Security-Block abgeschlossen: `SEC-001` bis `SEC-009` in `docs/roadmap-security-v2.md` sind erledigt.
 - Message-Relay-Block abgeschlossen: `SRV-001` bis `SRV-008` in `docs/roadmap-message-relay-v1.md` sind erledigt.
-- Letztes Update: `CLI-007` abgeschlossen (UX-Mindestset fuer Remote-Status, Trust-Status, sichtbare Fehlerbilder und expliziter Silent-Downgrade-Block) in `apps/ble_spike/lib/main.dart`, `apps/ble_spike/lib/transport/relay_runtime_config.dart`, `apps/ble_spike/test/relay_runtime_config_test.dart` und `docs/roadmap-client-remote-transport-v1.md`.
-- Naechster auszufuehrender Block nach Regel "Naechster Task": `CLI-*` aus `docs/roadmap-client-remote-transport-v1.md`.
-- Naechster konkreter Task: `CLI-008` (erster offener Punkt in `docs/roadmap-client-remote-transport-v1.md`).
+- Letztes Update: `CLI-008` abgeschlossen (Integrationstests gegen lokalen Server fuer happy path, offline + retry und dedupe) in `apps/ble_spike/test/relay_link_local_server_integration_test.dart` und `docs/roadmap-client-remote-transport-v1.md`.
+- Naechster auszufuehrender Block nach Regel "Naechster Task": keiner in den aktuellen SEC/SRV/CLI Nebenroadmaps (alle Tasks erledigt).
+- Naechster konkreter Task: Schritt 4 aus dieser Datei starten (Privacy/DSGVO Paket: Datenfluesse, Retention/Logs, AVV/DPA, Incident-Prozess).
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
 - [x] SRV-001..SRV-008 : siehe `docs/roadmap-message-relay-v1.md` (done 2026-02-09)
-- [ ] CLI-008.. : siehe `docs/roadmap-client-remote-transport-v1.md`
+- [x] CLI-001..CLI-008 : siehe `docs/roadmap-client-remote-transport-v1.md` (done 2026-02-09)
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)
 Diese Formulierungen sollen identisch behandelt werden wie "fuehre den naechsten Task aus":
