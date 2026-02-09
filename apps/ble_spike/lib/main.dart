@@ -8,6 +8,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'ble/ble.dart';
 import 'chat/chat.dart';
 import 'transport/transport.dart';
+import 'transport/relay_runtime_config.dart';
 import 'security/pairing_session.dart';
 
 Future<void> main() async {
@@ -286,6 +287,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final List<String> _log = [];
   final List<ChatMessage> _messages = [];
+  final RelayRuntimeConfig _relayRuntimeConfig =
+      RelayRuntimeConfig.fromEnvironment;
 
   // BLE components
   GattServer? _gattServer;
@@ -306,6 +309,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isConnected = false;
   bool _isScanning = false;
   bool _isAdvertising = false;
+  String? _statusError;
   List<DiscoveredPeripheral> _discoveredDevices = [];
 
   // Subscriptions
@@ -330,7 +334,12 @@ class _ChatScreenState extends State<ChatScreen> {
         await _gattServer!.start();
 
         _connectionSub = _gattServer!.connectionState.listen((connected) {
-          setState(() => _isConnected = connected);
+          setState(() {
+            _isConnected = connected;
+            if (connected) {
+              _statusError = null;
+            }
+          });
           if (connected) {
             _setupTransport(_gattServer!);
           } else {
@@ -349,7 +358,12 @@ class _ChatScreenState extends State<ChatScreen> {
         await _gattClient!.initialize();
 
         _connectionSub = _gattClient!.connectionState.listen((connected) {
-          setState(() => _isConnected = connected);
+          setState(() {
+            _isConnected = connected;
+            if (connected) {
+              _statusError = null;
+            }
+          });
           if (connected) {
             _setupTransport(_gattClient!);
           } else {
@@ -377,6 +391,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } catch (e) {
       _logLine('BLE Init Fehler: $e');
+      _setStatusError('BLE Init Fehler');
     }
   }
 
@@ -415,8 +430,15 @@ class _ChatScreenState extends State<ChatScreen> {
       send: (bytes) => _transport!.sendMessage(bytes),
       onUpdate: () {
         if (!mounted) return;
-        setState(() {});
-        if (_pairing?.stage == PairingStage.established) {
+        final pairing = _pairing;
+        setState(() {
+          if (pairing?.stage == PairingStage.failed) {
+            _statusError = _statusErrorFromPairing(pairing?.error);
+          } else if (pairing?.stage == PairingStage.established) {
+            _statusError = null;
+          }
+        });
+        if (pairing?.stage == PairingStage.established) {
           unawaited(_finalizeChatSessionFromPairing());
         }
       },
@@ -432,6 +454,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (consumed) {
         if (_pairing!.stage == PairingStage.failed) {
           _logLine('Pairing Fehler: ${_pairing!.error}');
+          _setStatusError(_statusErrorFromPairing(_pairing!.error));
         }
         return;
       }
@@ -451,6 +474,7 @@ class _ChatScreenState extends State<ChatScreen> {
       });
     } catch (e) {
       _logLine('Decrypt Fehler: $e');
+      _setStatusError('Entschluesselung fehlgeschlagen');
     }
   }
 
@@ -539,8 +563,10 @@ class _ChatScreenState extends State<ChatScreen> {
       await _gattServer!.startAdvertising(name: 'PRSM');
       setState(() => _isAdvertising = true);
       _logLine('Advertising gestartet');
+      _setStatusError(null);
     } catch (e) {
       _logLine('Advertising Fehler: $e');
+      _setStatusError('Advertising fehlgeschlagen');
     }
   }
 
@@ -550,6 +576,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await _gattServer!.stopAdvertising();
     setState(() => _isAdvertising = false);
     _logLine('Advertising gestoppt');
+    _setStatusError(null);
   }
 
   // Central actions
@@ -564,9 +591,11 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _gattClient!.startScan();
       _logLine('Scan gestartet');
+      _setStatusError(null);
     } catch (e) {
       _logLine('Scan Fehler: $e');
       setState(() => _isScanning = false);
+      _setStatusError('Scan fehlgeschlagen');
     }
   }
 
@@ -576,6 +605,7 @@ class _ChatScreenState extends State<ChatScreen> {
     await _gattClient!.stopScan();
     setState(() => _isScanning = false);
     _logLine('Scan gestoppt');
+    _setStatusError(null);
   }
 
   Future<void> _connectTo(DiscoveredPeripheral device) async {
@@ -593,8 +623,10 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       await _gattClient!.connect(device.peripheral);
       _logLine('Verbunden!');
+      _setStatusError(null);
     } catch (e) {
       _logLine('Verbindung fehlgeschlagen: $e');
+      _setStatusError('Verbindung fehlgeschlagen');
     }
   }
 
@@ -660,7 +692,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _expectedPeerStaticPubkeyX25519 = null;
     _requireExpectedPeer = false;
 
-    setState(() => _isConnected = false);
+    setState(() {
+      _isConnected = false;
+      _statusError = null;
+    });
     _logLine('Getrennt');
   }
 
@@ -670,6 +705,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty || _transport == null) return;
     if (_chatSession == null) {
       _logLine('Noch nicht bereit: Pairing abschliessen');
+      _setStatusError('Pairing noch nicht abgeschlossen');
       return;
     }
 
@@ -684,11 +720,13 @@ class _ChatScreenState extends State<ChatScreen> {
 
       await _transport!.sendMessage(result.frame);
       _logLine('Gesendet!');
+      _setStatusError(null);
 
       // Update status
       _updateMessageStatus(result.message.messageId, MessageStatus.sent);
     } catch (e) {
       _logLine('Senden fehlgeschlagen: $e');
+      _setStatusError('Senden fehlgeschlagen');
     }
   }
 
@@ -711,6 +749,77 @@ class _ChatScreenState extends State<ChatScreen> {
         sessionId: msg.sessionId,
       );
     });
+  }
+
+  void _setStatusError(String? message) {
+    if (!mounted) {
+      _statusError = message;
+      return;
+    }
+    setState(() {
+      _statusError = message;
+    });
+  }
+
+  bool _isSilentDowngradeBlocked(PairingSession? pairing) {
+    if (pairing == null || pairing.stage != PairingStage.failed) {
+      return false;
+    }
+    final error = pairing.error;
+    if (error == null) {
+      return false;
+    }
+    return error.contains('silent downgrade');
+  }
+
+  String _statusErrorFromPairing(String? error) {
+    if (error == null || error.isEmpty) {
+      return 'Pairing fehlgeschlagen';
+    }
+    if (error.contains('silent downgrade')) {
+      return 'Sicherheitsabbruch: stilles Downgrade blockiert';
+    }
+    return 'Pairing Fehler: $error';
+  }
+
+  String _trustLabel(PairingSession? pairing) {
+    if (pairing == null) {
+      return 'untrusted';
+    }
+    if (pairing.stage == PairingStage.established) {
+      return pairing.trustedReconnect ? 'trusted (reconnect)' : 'trusted (neu)';
+    }
+    return 'untrusted';
+  }
+
+  Widget _buildStatusPill({
+    required IconData icon,
+    required String text,
+    required Color color,
+    required Color foreground,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: foreground),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: foreground,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _logLine(String message) {
@@ -787,6 +896,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   : 'Pairing: sicher',
             PairingStage.failed => 'Pairing: FEHLER',
           };
+    final silentDowngradeBlocked = _isSilentDowngradeBlocked(pairing);
+    final remoteAvailable = _relayRuntimeConfig.isRemoteAvailable;
+    final remoteStatusLabel = _relayRuntimeConfig.remoteStatusLabel;
+    final trustLabel = _trustLabel(pairing);
+    final statusError = _statusError;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -795,27 +909,80 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? Colors.green.shade100
                 : Colors.yellow.shade100)
           : Colors.orange.shade100,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            _isConnected
-                ? Icons.bluetooth_connected
-                : Icons.bluetooth_searching,
-            size: 20,
+          Row(
+            children: [
+              Icon(
+                _isConnected
+                    ? Icons.bluetooth_connected
+                    : Icons.bluetooth_searching,
+                size: 20,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _isConnected
+                      ? (_chatSession != null
+                            ? 'Verbunden (Secure)'
+                            : 'Verbunden (Pairing)')
+                      : 'Nicht verbunden',
+                  style: const TextStyle(fontSize: 12),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              _isConnected
-                  ? (_chatSession != null
-                        ? 'Verbunden (Secure)'
-                        : 'Verbunden (Pairing)')
-                  : 'Nicht verbunden',
-              style: const TextStyle(fontSize: 12),
-            ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              _buildStatusPill(
+                icon: remoteAvailable ? Icons.cloud_done : Icons.cloud_off,
+                text: remoteStatusLabel,
+                color: remoteAvailable
+                    ? Colors.green.shade50
+                    : Colors.orange.shade50,
+                foreground: remoteAvailable
+                    ? Colors.green.shade800
+                    : Colors.orange.shade900,
+              ),
+              _buildStatusPill(
+                icon: trustLabel.startsWith('trusted')
+                    ? Icons.verified_user
+                    : Icons.gpp_maybe,
+                text: 'Trust: $trustLabel',
+                color: trustLabel.startsWith('trusted')
+                    ? Colors.teal.shade50
+                    : Colors.blueGrey.shade50,
+                foreground: trustLabel.startsWith('trusted')
+                    ? Colors.teal.shade900
+                    : Colors.blueGrey.shade900,
+              ),
+              if (_isConnected && pairingLabel != null)
+                _buildStatusPill(
+                  icon: Icons.lock_clock,
+                  text: pairingLabel,
+                  color: Colors.blue.shade50,
+                  foreground: Colors.blue.shade900,
+                ),
+              if (silentDowngradeBlocked)
+                _buildStatusPill(
+                  icon: Icons.gpp_bad,
+                  text: 'Kein stilles Downgrade (blockiert)',
+                  color: Colors.red.shade50,
+                  foreground: Colors.red.shade900,
+                ),
+              if (statusError != null)
+                _buildStatusPill(
+                  icon: Icons.error_outline,
+                  text: statusError,
+                  color: Colors.red.shade50,
+                  foreground: Colors.red.shade900,
+                ),
+            ],
           ),
-          if (_isConnected && pairingLabel != null)
-            Text(pairingLabel, style: const TextStyle(fontSize: 12)),
         ],
       ),
     );
