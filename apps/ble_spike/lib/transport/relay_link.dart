@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import 'relay_inbox.dart';
 import 'transport.dart';
 
 class RelayLinkConfig {
@@ -414,6 +415,7 @@ class RelayLink implements TransportLink {
     required this.outboundMailboxId,
     required this.inboundMailboxId,
     this.onInboundCiphertext,
+    this.inboxQueue,
     this.defaultAutoAck = true,
     this.defaultPullLimit,
     Random? random,
@@ -424,6 +426,7 @@ class RelayLink implements TransportLink {
   final String outboundMailboxId;
   final String inboundMailboxId;
   final void Function(Uint8List bytes)? onInboundCiphertext;
+  final RelayInboxQueue? inboxQueue;
   final bool defaultAutoAck;
   final int? defaultPullLimit;
   final Random _random;
@@ -466,9 +469,33 @@ class RelayLink implements TransportLink {
     bool? autoAck,
   }) async {
     final pulled = await pull(cursor: cursor, limit: limit);
-    for (final message in pulled.messages) {
-      onInboundCiphertext?.call(Uint8List.fromList(message.ciphertext));
+    final inbox = inboxQueue;
+    if (inbox == null) {
+      for (final message in pulled.messages) {
+        onInboundCiphertext?.call(Uint8List.fromList(message.ciphertext));
+      }
+    } else {
+      await inbox.enqueuePulled(
+        messages: pulled.messages
+            .map(
+              (message) => RelayInboxIncomingMessage(
+                messageId: message.messageId,
+                ciphertext: message.ciphertext,
+                createdAt: message.createdAt,
+                expiresAt: message.expiresAt,
+                sizeBytes: message.sizeBytes,
+              ),
+            )
+            .toList(growable: false),
+      );
+      await inbox.drainPending(
+        limit: limit ?? defaultPullLimit ?? 50,
+        onEntry: (entry) async {
+          onInboundCiphertext?.call(Uint8List.fromList(entry.ciphertext));
+        },
+      );
     }
+
     RelayAckResult? ackResult;
     final shouldAck = autoAck ?? defaultAutoAck;
     if (shouldAck && pulled.messages.isNotEmpty) {

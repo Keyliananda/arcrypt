@@ -45,14 +45,14 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Stand: 2026-02-09
 - Security-Block abgeschlossen: `SEC-001` bis `SEC-009` in `docs/roadmap-security-v2.md` sind erledigt.
 - Message-Relay-Block abgeschlossen: `SRV-001` bis `SRV-008` in `docs/roadmap-message-relay-v1.md` sind erledigt.
-- Letztes Update: `CLI-003` abgeschlossen (persistente Outbox inkl. idempotentem Resend mit `client_msg_id`) in `apps/ble_spike/lib/transport/relay_outbox.dart`, `apps/ble_spike/lib/transport/relay_link.dart`, `apps/ble_spike/test/relay_outbox_test.dart` und `docs/roadmap-client-remote-transport-v1.md`.
+- Letztes Update: `CLI-004` abgeschlossen (persistente Inbox inkl. `message_id`-Dedupe, restart-safe, out-of-order tolerant) in `apps/ble_spike/lib/transport/relay_inbox.dart`, `apps/ble_spike/lib/transport/relay_link.dart`, `apps/ble_spike/test/relay_inbox_test.dart`, `apps/ble_spike/test/relay_link_test.dart` und `docs/roadmap-client-remote-transport-v1.md`.
 - Naechster auszufuehrender Block nach Regel "Naechster Task": `CLI-*` aus `docs/roadmap-client-remote-transport-v1.md`.
-- Naechster konkreter Task: `CLI-004` (erster offener Punkt in `docs/roadmap-client-remote-transport-v1.md`).
+- Naechster konkreter Task: `CLI-005` (erster offener Punkt in `docs/roadmap-client-remote-transport-v1.md`).
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
 - [x] SRV-001..SRV-008 : siehe `docs/roadmap-message-relay-v1.md` (done 2026-02-09)
-- [ ] CLI-004.. : siehe `docs/roadmap-client-remote-transport-v1.md`
+- [ ] CLI-005.. : siehe `docs/roadmap-client-remote-transport-v1.md`
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)
 Diese Formulierungen sollen identisch behandelt werden wie "fuehre den naechsten Task aus":
