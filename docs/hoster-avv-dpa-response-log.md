@@ -10,6 +10,7 @@ Zentrale Sammelstelle fuer alle eingehenden Hoster-Antworten zu AVV/DPA und Inci
 1. Jede neue Rueckmeldung (Mail/Ticket/Vertragsdokument) als neuen Eintrag in der Chronik erfassen.
 2. Fuer betroffene AVV-* Punkte die Detailtabelle aktualisieren.
 3. Erst wenn ein Punkt mit belastbarem Nachweis belegt ist, in `docs/hoster-avv-dpa-checklist.md` auf `done` setzen.
+4. Bei ausgehendem Versand immer Ticket-/Mailreferenz und Versandzeit im Outbound-Tracking nachziehen.
 
 ## Statuskriterien
 - `open`: keine verwertbare Antwort vorliegend
@@ -29,12 +30,13 @@ Zentrale Sammelstelle fuer alle eingehenden Hoster-Antworten zu AVV/DPA und Inci
 | AVV-08 | Security-Notfallkontakt und Erreichbarkeit | in_review | ausstehend | 2026-02-09 | Kontaktweg fehlt | Notfallkanal + Servicezeiten dokumentieren |
 
 ## Outbound-Tracking (Ticketversand + Follow-ups)
-| Tracking-ID | Kanal | Status | Erstversand | Naechster Termin | Referenz |
-| --- | --- | --- | --- | --- | --- |
-| HOSTER-REQ-2026-02-09 | Mail/Ticket | vorbereitet, Versand ausstehend | 2026-02-09 | 2026-02-12 (Follow-up 1) | `docs/hoster-avv-dpa-request-v1.md` |
+| Tracking-ID | Kanal | Status | Versand bestaetigt am | Ticket-/Mailreferenz | Naechster Termin | Referenz |
+| --- | --- | --- | --- | --- | --- | --- |
+| HOSTER-REQ-2026-02-09 | Mail/Ticket | versandbereit, Ticketreferenz ausstehend | ausstehend | ausstehend | 2026-02-12 (Follow-up 1) | `docs/hoster-avv-dpa-request-v1.md` |
 
 ## Antwort-Chronik
 | Datum | Quelle | Betroffene IDs | Kurzinhalt | Nachweis-Link |
 | --- | --- | --- | --- | --- |
 | 2026-02-09 | Intern | AVV-01..AVV-08 | Logstruktur erstellt, wartet auf externe Antworten | Dieses Dokument |
 | 2026-02-09 | Intern | AVV-01..AVV-08 | Outbound-Tracking und feste Follow-up-Termine ergaenzt | Dieses Dokument |
+| 2026-02-09 | Intern | AVV-01..AVV-08 | Follow-up- und Eskalationsvorlagen fuer alle Timeline-Termine vorbereitet | `docs/hoster-avv-dpa-followup-templates-v1.md` |
