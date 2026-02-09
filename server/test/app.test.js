@@ -50,6 +50,9 @@ function makeApp(overrides = {}) {
       perToken: 30,
       perIp: 120
     },
+    wake: {
+      tokenTtlSec: 2592000
+    },
     relay: {
       proofMaxSkewSec: 300,
       nonceTtlSec: 900,
@@ -179,6 +182,7 @@ test("register then unregister removes token", async () => {
 
   const stored = await store.getTokenByValue(token);
   assert.equal(stored.token, token);
+  assert.equal(stored.expires_at, "2026-03-04T12:00:00.000Z");
 
   const unregister = await call(app, {
     path: "/v1/unregister",
@@ -188,6 +192,24 @@ test("register then unregister removes token", async () => {
 
   const missing = await store.getTokenByValue(token);
   assert.equal(missing, null);
+});
+
+test("register applies configured wake token ttl", async () => {
+  const { app, store } = makeApp({
+    wake: {
+      tokenTtlSec: 120
+    }
+  });
+  const token = "apns-token-ttl";
+
+  const register = await call(app, {
+    path: "/v1/register",
+    body: JSON.stringify({ token, topic: "com.example.app", env: "sandbox" })
+  });
+  assert.equal(register.status, 200);
+
+  const stored = await store.getTokenByValue(token);
+  assert.equal(stored.expires_at, "2026-02-02T12:02:00.000Z");
 });
 
 test("wake requires configured hmac", async () => {

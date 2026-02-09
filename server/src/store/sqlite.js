@@ -60,18 +60,17 @@ class SqliteStore {
     });
   }
 
-  async upsertToken({ token, topic, env, lastSeen }) {
+  async upsertToken({ token, topic, env, lastSeen, expiresAt = null }) {
     const now = toIso(lastSeen);
+    const expires = toIso(expiresAt);
     await this.run(
-      "INSERT OR IGNORE INTO device_tokens (token, topic, env, last_seen, created_at) VALUES (?, ?, ?, ?, ?)",
-      [token, topic, env, now, now]
+      "INSERT OR IGNORE INTO device_tokens (token, topic, env, last_seen, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [token, topic, env, now, now, expires]
     );
-    await this.run("UPDATE device_tokens SET topic = ?, env = ?, last_seen = ? WHERE token = ?", [
-      topic,
-      env,
-      now,
-      token
-    ]);
+    await this.run(
+      "UPDATE device_tokens SET topic = ?, env = ?, last_seen = ?, expires_at = ? WHERE token = ?",
+      [topic, env, now, expires, token]
+    );
     const row = await this.get("SELECT id FROM device_tokens WHERE token = ? LIMIT 1", [token]);
     return row ? row.id : null;
   }
@@ -119,6 +118,17 @@ class SqliteStore {
       [scope, key, windowStartValue]
     );
     return row ? row.count : 1;
+  }
+
+  async cleanupExpiredDeviceTokens(now = new Date()) {
+    const nowIso = toIso(toDate(now));
+    const expired = await this.run(
+      "DELETE FROM device_tokens WHERE expires_at IS NOT NULL AND expires_at <= ?",
+      [nowIso]
+    );
+    return {
+      tokens_expired: expired.changes || 0
+    };
   }
 
   async getRelayMailbox(mailboxIdHash) {

@@ -75,6 +75,7 @@ node --test
 - `RATE_LIMIT_WINDOW_SEC` (default: 3600)
 - `RATE_LIMIT_TOKEN_PER_WINDOW` (default: 30)
 - `RATE_LIMIT_IP_PER_WINDOW` (default: 120)
+- `WAKE_TOKEN_TTL_SEC` (default: 2592000; 30 days; set `<= 0` to disable token expiry)
 - `DB_DRIVER` (`memory` or `sqlite`, `mysql` optional)
 - `DB_FILENAME` (SQLite filename)
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` (MySQL optional)
@@ -225,6 +226,16 @@ Run one cleanup pass for expired relay rows and aged acked rows:
 
 ```bash
 npm run cleanup:relay
+```
+
+Use cron to run this every 5-15 minutes.
+
+## Wake token expiry cleanup
+
+Run one cleanup pass for expired wake tokens (`device_tokens.expires_at`):
+
+```bash
+npm run cleanup:wake
 ```
 
 Use cron to run this every 5-15 minutes.

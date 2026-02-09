@@ -33,12 +33,13 @@ class MemoryStore {
     this.nextRelayMessageRowId = 1;
   }
 
-  async upsertToken({ token, topic, env, lastSeen }) {
+  async upsertToken({ token, topic, env, lastSeen, expiresAt = null }) {
     const existing = this.tokensByValue.get(token);
     if (existing) {
       existing.topic = topic;
       existing.env = env;
       existing.last_seen = toIso(lastSeen);
+      existing.expires_at = toIso(expiresAt);
       this.tokensById.set(existing.id, existing);
       return existing.id;
     }
@@ -50,7 +51,7 @@ class MemoryStore {
       topic,
       env,
       last_seen: toIso(lastSeen),
-      expires_at: null
+      expires_at: toIso(expiresAt)
     };
     this.tokensByValue.set(token, record);
     this.tokensById.set(id, record);
@@ -96,6 +97,32 @@ class MemoryStore {
     const next = current + 1;
     this.rateCounters.set(counterKey, next);
     return next;
+  }
+
+  async cleanupExpiredDeviceTokens(now = new Date()) {
+    const nowMs = now instanceof Date ? now.getTime() : new Date(now).getTime();
+    let removed = 0;
+
+    for (const [token, record] of this.tokensByValue.entries()) {
+      if (!record.expires_at) {
+        continue;
+      }
+      if (Date.parse(record.expires_at) > nowMs) {
+        continue;
+      }
+      this.tokensByValue.delete(token);
+      this.tokensById.delete(record.id);
+      for (const [wakeId, wake] of this.wakeRequests.entries()) {
+        if (wake.token_id === record.id) {
+          this.wakeRequests.delete(wakeId);
+        }
+      }
+      removed += 1;
+    }
+
+    return {
+      tokens_expired: removed
+    };
   }
 
   async getRelayMailbox(mailboxIdHash) {

@@ -20,17 +20,19 @@ class MysqlStore {
     });
   }
 
-  async upsertToken({ token, topic, env, lastSeen }) {
+  async upsertToken({ token, topic, env, lastSeen, expiresAt = null }) {
     const now = toMysqlDatetime(lastSeen);
+    const expiry = expiresAt ? toMysqlDatetime(expiresAt) : null;
     const sql =
-      "INSERT INTO device_tokens (token, topic, env, last_seen, created_at) " +
-      "VALUES (?, ?, ?, ?, ?) " +
+      "INSERT INTO device_tokens (token, topic, env, last_seen, created_at, expires_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?) " +
       "ON DUPLICATE KEY UPDATE " +
       "topic = VALUES(topic), " +
       "env = VALUES(env), " +
       "last_seen = VALUES(last_seen), " +
+      "expires_at = VALUES(expires_at), " +
       "id = LAST_INSERT_ID(id)";
-    const [result] = await this.pool.execute(sql, [token, topic, env, now, now]);
+    const [result] = await this.pool.execute(sql, [token, topic, env, now, now, expiry]);
     return result.insertId;
   }
 
@@ -67,6 +69,17 @@ class MysqlStore {
       [scope, key, windowStartValue]
     );
     return rows[0] ? rows[0].count : 1;
+  }
+
+  async cleanupExpiredDeviceTokens(now = new Date()) {
+    const nowValue = toMysqlDatetime(now instanceof Date ? now : new Date(now));
+    const [expired] = await this.pool.execute(
+      "DELETE FROM device_tokens WHERE expires_at IS NOT NULL AND expires_at <= ?",
+      [nowValue]
+    );
+    return {
+      tokens_expired: expired.affectedRows || 0
+    };
   }
 
   async getRelayMailbox(mailboxIdHash) {

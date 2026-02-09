@@ -217,3 +217,55 @@ test("sqlite relay cleanup removes expired and stale acked rows", async () => {
     await store.close();
   }
 });
+
+test("sqlite wake token cleanup removes expired rows only", async () => {
+  const filename = tmpSqliteFile("wake-cleanup-");
+  await execSql(filename, LEGACY_WAKE_SCHEMA);
+
+  const store = new SqliteStore({ filename });
+  try {
+    await store.run(
+      "INSERT INTO device_tokens (token, topic, env, created_at, last_seen, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "token-expired",
+        "com.example.app",
+        "sandbox",
+        "2026-02-08T11:00:00Z",
+        "2026-02-08T11:00:00Z",
+        "2026-02-08T11:59:00Z"
+      ]
+    );
+    await store.run(
+      "INSERT INTO device_tokens (token, topic, env, created_at, last_seen, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "token-active",
+        "com.example.app",
+        "sandbox",
+        "2026-02-08T11:00:00Z",
+        "2026-02-08T11:00:00Z",
+        "2026-02-08T12:30:00Z"
+      ]
+    );
+    await store.run(
+      "INSERT INTO device_tokens (token, topic, env, created_at, last_seen, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+      [
+        "token-no-expiry",
+        "com.example.app",
+        "sandbox",
+        "2026-02-08T11:00:00Z",
+        "2026-02-08T11:00:00Z",
+        null
+      ]
+    );
+
+    const result = await store.cleanupExpiredDeviceTokens(new Date("2026-02-08T12:00:00Z"));
+    assert.deepEqual(result, {
+      tokens_expired: 1
+    });
+
+    const tokens = await store.all("SELECT token FROM device_tokens ORDER BY token ASC");
+    assert.deepEqual(tokens.map((row) => row.token), ["token-active", "token-no-expiry"]);
+  } finally {
+    await store.close();
+  }
+});

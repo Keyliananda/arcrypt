@@ -35,8 +35,10 @@ Regeln:
 
 ### Technische Durchsetzung
 - Cleanup Job: `npm run cleanup:relay` alle 5-15 Minuten per Cron.
+- Cleanup Job: `npm run cleanup:wake` alle 5-15 Minuten per Cron (abgelaufene `device_tokens`).
 - ACK-Grace: `RELAY_ACK_DELETE_GRACE_SEC` (default 900s).
 - Expiry-Window: `RELAY_MIN_EXPIRY_SEC` bis `RELAY_MAX_EXPIRY_SEC`.
+- Token-TTL: `WAKE_TOKEN_TTL_SEC` (default 2592000s / 30 Tage).
 
 Retention-Leitplanken:
 - "So kurz wie moeglich, so lang wie noetig" fuer Verfuegbarkeit.

@@ -430,7 +430,12 @@ function createApp({ store, config, now = Date.now }) {
     }
 
     const lastSeen = new Date(nowMs);
-    await store.upsertToken({ token, topic, env, lastSeen });
+    const tokenTtlSec = config.wake && Number.isFinite(config.wake.tokenTtlSec)
+      ? config.wake.tokenTtlSec
+      : 2592000;
+    const expiresAt =
+      tokenTtlSec > 0 ? new Date(lastSeen.getTime() + tokenTtlSec * 1000) : null;
+    await store.upsertToken({ token, topic, env, lastSeen, expiresAt });
     return jsonResponse(200, { ok: true });
   }
 

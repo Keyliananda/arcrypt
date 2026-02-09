@@ -50,12 +50,14 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Privacy/DSGVO gestartet: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (siehe `docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09).
 - PRIV-002 vorbereitet: AVV/DPA + Incident-SLA Checkliste erstellt (`docs/hoster-avv-dpa-checklist.md`, 2026-02-09), vertragliche Klaerung mit Hoster bleibt offen.
 - PRIV-003 vorbereitet: Drafts fuer Art.-30 Eintrag und Privacy Policy erstellt (`docs/art30-record-prsm-v1.md`, `docs/privacy-policy-prsm-draft-v1.md`, 2026-02-09), finale Betreiberdaten fehlen noch.
+- Server-Roadmap Phase 3 Luecke geschlossen: Wake-Token TTL + Cleanup-Job implementiert (`server/scripts/cleanup_wake_tokens.js`, `WAKE_TOKEN_TTL_SEC`, done 2026-02-09).
 - Naechster konkreter Task: Vertrags-/Providerdetails einholen und die `TBD`-Felder finalisieren.
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
 - [x] SRV-001..SRV-008 : siehe `docs/roadmap-message-relay-v1.md` (done 2026-02-09)
 - [x] CLI-001..CLI-008 : siehe `docs/roadmap-client-remote-transport-v1.md` (done 2026-02-09)
+- [x] SRV-WAKE-CLEANUP: Wake Token TTL + Expiry-Cleanup-Job implementiert (`server/scripts/cleanup_wake_tokens.js`, done 2026-02-09)
 - [x] PRIV-001: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (`docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09)
 - [ ] PRIV-002: AVV/DPA + Incident-SLA mit Hoster finalisieren (extern, vertraglich; Vorbereitung in `docs/hoster-avv-dpa-checklist.md`, 2026-02-09)
 - [ ] PRIV-003: Betreiberdaten fuer finalen Art.-30 Eintrag und Privacy Policy final ergaenzen (Drafts in `docs/art30-record-prsm-v1.md` und `docs/privacy-policy-prsm-draft-v1.md`, 2026-02-09)

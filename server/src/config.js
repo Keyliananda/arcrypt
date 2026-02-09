@@ -37,6 +37,9 @@ const config = {
     perToken: toInt(process.env.RATE_LIMIT_TOKEN_PER_WINDOW, 30),
     perIp: toInt(process.env.RATE_LIMIT_IP_PER_WINDOW, 120)
   },
+  wake: {
+    tokenTtlSec: toInt(process.env.WAKE_TOKEN_TTL_SEC, 2592000)
+  },
   db: {
     driver: process.env.DB_DRIVER || "memory",
     filename: process.env.DB_FILENAME || "./data.sqlite",
