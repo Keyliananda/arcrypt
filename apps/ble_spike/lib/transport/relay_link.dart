@@ -124,6 +124,189 @@ class RelayPollResult {
   final RelayAckResult? ack;
 }
 
+class RelayPollingConfig {
+  const RelayPollingConfig({
+    this.interval = const Duration(seconds: 8),
+    this.jitterFactor = 0.2,
+    this.pollImmediately = true,
+    this.maxBurstPerTick = 4,
+    this.errorRetryDelay = const Duration(seconds: 2),
+  });
+
+  final Duration interval;
+  final double jitterFactor;
+  final bool pollImmediately;
+  final int maxBurstPerTick;
+  final Duration errorRetryDelay;
+}
+
+class RelayPollingLoop {
+  RelayPollingLoop({
+    required RelayLink link,
+    this.config = const RelayPollingConfig(),
+    this.limit,
+    this.autoAck,
+    this.onPoll,
+    this.onError,
+    Random? random,
+    void Function(String message)? logger,
+  }) : _link = link,
+       _random = random ?? Random.secure(),
+       _logger = logger;
+
+  final RelayLink _link;
+  final RelayPollingConfig config;
+  final int? limit;
+  final bool? autoAck;
+  final void Function(RelayPollResult result)? onPoll;
+  final void Function(Object error, StackTrace stackTrace)? onError;
+  final Random _random;
+  final void Function(String message)? _logger;
+
+  bool _running = false;
+  String? _cursor;
+  Timer? _timer;
+  Future<void>? _activeCycle;
+
+  bool get isRunning => _running;
+
+  void start({String? cursor}) {
+    if (_running) {
+      return;
+    }
+    if (config.interval.isNegative) {
+      throw ArgumentError.value(
+        config.interval,
+        'config.interval',
+        'must be >= 0',
+      );
+    }
+    if (config.errorRetryDelay.isNegative) {
+      throw ArgumentError.value(
+        config.errorRetryDelay,
+        'config.errorRetryDelay',
+        'must be >= 0',
+      );
+    }
+    if (config.jitterFactor < 0 || config.jitterFactor > 1) {
+      throw ArgumentError.value(
+        config.jitterFactor,
+        'config.jitterFactor',
+        'must be between 0 and 1',
+      );
+    }
+    if (config.maxBurstPerTick < 1) {
+      throw ArgumentError.value(
+        config.maxBurstPerTick,
+        'config.maxBurstPerTick',
+        'must be >= 1',
+      );
+    }
+    _running = true;
+    _cursor = cursor;
+    _scheduleNext(initial: true, hadError: false);
+  }
+
+  Future<void> stop() async {
+    _running = false;
+    _timer?.cancel();
+    _timer = null;
+    final activeCycle = _activeCycle;
+    if (activeCycle != null) {
+      await activeCycle;
+    }
+  }
+
+  Future<void> triggerNow() async {
+    if (!_running) {
+      return;
+    }
+    _timer?.cancel();
+    _timer = null;
+    if (_activeCycle != null) {
+      return;
+    }
+    await _runCycle();
+  }
+
+  void _scheduleNext({required bool initial, required bool hadError}) {
+    if (!_running) {
+      return;
+    }
+    final baseDelay = hadError
+        ? config.errorRetryDelay
+        : (initial && config.pollImmediately ? Duration.zero : config.interval);
+    final delay = computeJitteredInterval(
+      baseInterval: baseDelay,
+      jitterFactor: config.jitterFactor,
+      random: _random,
+    );
+    _timer = Timer(delay, () {
+      unawaited(_runCycle());
+    });
+  }
+
+  Future<void> _runCycle() async {
+    if (!_running || _activeCycle != null) {
+      return;
+    }
+
+    var hadError = false;
+    final cycle = () async {
+      var polls = 0;
+      while (_running && polls < config.maxBurstPerTick) {
+        final result = await _link.pollOnce(
+          cursor: _cursor,
+          limit: limit,
+          autoAck: autoAck,
+        );
+        _cursor = result.pull.nextCursor;
+        onPoll?.call(result);
+        polls++;
+        if (!result.pull.hasMore) {
+          break;
+        }
+      }
+    }();
+
+    _activeCycle = cycle;
+    try {
+      await cycle;
+    } catch (error, stackTrace) {
+      hadError = true;
+      _log('poll cycle failed: $error');
+      onError?.call(error, stackTrace);
+    } finally {
+      _activeCycle = null;
+      _scheduleNext(initial: false, hadError: hadError);
+    }
+  }
+
+  void _log(String message) {
+    _logger?.call('[RelayPollingLoop] $message');
+  }
+}
+
+Duration computeJitteredInterval({
+  required Duration baseInterval,
+  required double jitterFactor,
+  required Random random,
+}) {
+  if (baseInterval <= Duration.zero || jitterFactor <= 0) {
+    return baseInterval <= Duration.zero ? Duration.zero : baseInterval;
+  }
+  final jitterRangeMs = (baseInterval.inMilliseconds * jitterFactor).round();
+  if (jitterRangeMs <= 0) {
+    return baseInterval;
+  }
+  final offset = random.nextInt(jitterRangeMs * 2 + 1) - jitterRangeMs;
+  final delayMs = baseInterval.inMilliseconds + offset;
+  if (delayMs <= 0) {
+    return Duration.zero;
+  }
+  return Duration(milliseconds: delayMs);
+}
+
 class RelayMailboxHttpClient {
   RelayMailboxHttpClient({
     required RelayLinkConfig config,
@@ -376,13 +559,11 @@ class RelayMailboxHttpClient {
     if (clampedMs > _config.maxBackoff.inMilliseconds) {
       clampedMs = _config.maxBackoff.inMilliseconds;
     }
-    final jitterRange = (clampedMs * _config.jitterFactor).round();
-    if (jitterRange <= 0) {
-      return Duration(milliseconds: clampedMs);
-    }
-    final random = _random();
-    final offset = random.nextInt(jitterRange * 2 + 1) - jitterRange;
-    return Duration(milliseconds: clampedMs + offset);
+    return computeJitteredInterval(
+      baseInterval: Duration(milliseconds: clampedMs),
+      jitterFactor: _config.jitterFactor,
+      random: _random(),
+    );
   }
 
   DateTime _now() {

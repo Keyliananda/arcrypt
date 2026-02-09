@@ -201,6 +201,187 @@ void main() {
       expect(inbound.first, Uint8List.fromList(<int>[1, 2, 3]));
     },
   );
+
+  test('relay polling loop polls repeatedly and stops cleanly', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    var pullCount = 0;
+    var ackCount = 0;
+    final reachedThreePulls = Completer<void>();
+
+    unawaited(
+      server.listen((request) async {
+        if (request.uri.path == '/v1/mailbox/pull') {
+          pullCount++;
+          if (pullCount >= 3 && !reachedThreePulls.isCompleted) {
+            reachedThreePulls.complete();
+          }
+          request.response.statusCode = 200;
+          request.response.write(
+            '{"ok":true,"messages":[],"next_cursor":null,"has_more":false}',
+          );
+        } else if (request.uri.path == '/v1/mailbox/ack') {
+          ackCount++;
+          request.response.statusCode = 200;
+          request.response.write(
+            '{"ok":true,"acked":[],"unknown":[],"already_acked":[]}',
+          );
+        } else {
+          request.response.statusCode = 404;
+          request.response.write('{"ok":false,"error":"not_found"}');
+        }
+        await request.response.close();
+      }).asFuture<void>(),
+    );
+
+    final client = RelayMailboxHttpClient(
+      config: RelayLinkConfig(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        requestTimeout: const Duration(seconds: 2),
+        maxRetries: 1,
+        initialBackoff: const Duration(milliseconds: 5),
+        maxBackoff: const Duration(milliseconds: 10),
+        jitterFactor: 0,
+        random: Random(17),
+        now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+      ),
+    );
+    addTearDown(() => client.close(force: true));
+
+    final relayLink = RelayLink(
+      client: client,
+      outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+      inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+      defaultAutoAck: true,
+    );
+    final poller = RelayPollingLoop(
+      link: relayLink,
+      config: const RelayPollingConfig(
+        interval: Duration(milliseconds: 20),
+        jitterFactor: 0,
+        pollImmediately: true,
+        maxBurstPerTick: 1,
+      ),
+      random: Random(19),
+    );
+    addTearDown(() => poller.stop());
+
+    poller.start();
+    await reachedThreePulls.future.timeout(const Duration(seconds: 2));
+    await poller.stop();
+
+    final pullsAfterStop = pullCount;
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(pullCount, pullsAfterStop);
+    expect(pullCount, greaterThanOrEqualTo(3));
+    expect(ackCount, 0);
+  });
+
+  test('relay polling loop drains has_more within one cycle', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+
+    var pullCount = 0;
+    final ackedIds = <String>[];
+    final inbound = <Uint8List>[];
+    final reachedThirdPull = Completer<void>();
+
+    unawaited(
+      server.listen((request) async {
+        if (request.uri.path == '/v1/mailbox/pull') {
+          pullCount++;
+          final messageId = 'msg_$pullCount';
+          final hasMore = pullCount < 3;
+          final nextCursor = hasMore ? '"cursor_$pullCount"' : 'null';
+          final payloadB64 = base64Encode(<int>[pullCount, pullCount + 1]);
+          request.response.statusCode = 200;
+          request.response.write(
+            '{"ok":true,"messages":[{"message_id":"$messageId","ciphertext":"$payloadB64"}],"next_cursor":$nextCursor,"has_more":${hasMore ? 'true' : 'false'}}',
+          );
+          if (pullCount == 3 && !reachedThirdPull.isCompleted) {
+            reachedThirdPull.complete();
+          }
+        } else if (request.uri.path == '/v1/mailbox/ack') {
+          final bodyText = await utf8.decoder.bind(request).join();
+          final body = jsonDecode(bodyText) as Map<String, dynamic>;
+          final ids = (body['message_ids'] as List).cast<String>();
+          ackedIds.addAll(ids);
+          request.response.statusCode = 200;
+          request.response.write(
+            '{"ok":true,"acked":${jsonEncode(ids)},"unknown":[],"already_acked":[]}',
+          );
+        } else {
+          request.response.statusCode = 404;
+          request.response.write('{"ok":false,"error":"not_found"}');
+        }
+        await request.response.close();
+      }).asFuture<void>(),
+    );
+
+    final client = RelayMailboxHttpClient(
+      config: RelayLinkConfig(
+        baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+        requestTimeout: const Duration(seconds: 2),
+        maxRetries: 1,
+        initialBackoff: const Duration(milliseconds: 5),
+        maxBackoff: const Duration(milliseconds: 10),
+        jitterFactor: 0,
+        random: Random(23),
+        now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+      ),
+    );
+    addTearDown(() => client.close(force: true));
+
+    final relayLink = RelayLink(
+      client: client,
+      outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+      inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+      onInboundCiphertext: (bytes) => inbound.add(Uint8List.fromList(bytes)),
+      defaultAutoAck: true,
+    );
+    final poller = RelayPollingLoop(
+      link: relayLink,
+      config: const RelayPollingConfig(
+        interval: Duration(seconds: 5),
+        jitterFactor: 0,
+        pollImmediately: true,
+        maxBurstPerTick: 5,
+      ),
+      random: Random(29),
+    );
+    addTearDown(() => poller.stop());
+
+    poller.start();
+    await reachedThirdPull.future.timeout(const Duration(seconds: 2));
+    await poller.stop();
+
+    expect(pullCount, 3);
+    expect(ackedIds, <String>['msg_1', 'msg_2', 'msg_3']);
+    expect(inbound, <Uint8List>[
+      Uint8List.fromList(<int>[1, 2]),
+      Uint8List.fromList(<int>[2, 3]),
+      Uint8List.fromList(<int>[3, 4]),
+    ]);
+  });
+
+  test('computeJitteredInterval stays inside configured bounds', () {
+    final random = _SequenceRandom(Queue<int>.from(<int>[0, 200]));
+    final low = computeJitteredInterval(
+      baseInterval: const Duration(seconds: 1),
+      jitterFactor: 0.1,
+      random: random,
+    );
+    final high = computeJitteredInterval(
+      baseInterval: const Duration(seconds: 1),
+      jitterFactor: 0.1,
+      random: random,
+    );
+
+    expect(low, const Duration(milliseconds: 900));
+    expect(high, const Duration(milliseconds: 1100));
+  });
 }
 
 String _computeExpectedProof({
@@ -280,4 +461,28 @@ class _MemoryRelayInboxStore implements RelayInboxStore {
 
   @override
   Future<void> close() async {}
+}
+
+class _SequenceRandom implements Random {
+  _SequenceRandom(this._values);
+
+  final Queue<int> _values;
+
+  @override
+  bool nextBool() => nextInt(2) == 1;
+
+  @override
+  double nextDouble() => nextInt(1 << 24) / (1 << 24);
+
+  @override
+  int nextInt(int max) {
+    if (max <= 0) {
+      throw ArgumentError.value(max, 'max', 'must be > 0');
+    }
+    if (_values.isEmpty) {
+      return 0;
+    }
+    final value = _values.removeFirst();
+    return value % max;
+  }
 }
