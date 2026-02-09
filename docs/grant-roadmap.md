@@ -42,15 +42,15 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 4. Nach Umsetzung: Task in der jeweiligen Nebenroadmap abhaken und kurz notieren, was sich geaendert hat (Dateipfade).
 
 ## Status
-- Stand: 2026-02-08
+- Stand: 2026-02-09
 - Security-Block abgeschlossen: `SEC-001` bis `SEC-009` in `docs/roadmap-security-v2.md` sind erledigt.
 - Naechster auszufuehrender Block nach Regel "Naechster Task": `SRV-*` aus `docs/roadmap-message-relay-v1.md`.
-- Letztes Update: `SRV-002` abgeschlossen (Message Relay API v1 spezifiziert) in `docs/message-relay-api-v1.md`.
-- Naechster konkreter Task: `SRV-003` (erster offener Punkt in `docs/roadmap-message-relay-v1.md`).
+- Letztes Update: `SRV-004` bis `SRV-006` abgeschlossen (Abuse-Guard + Mailbox-Endpunkte + Wake-Workflow) in `server/` und `docs/roadmap-message-relay-v1.md`.
+- Naechster konkreter Task: `SRV-007` (erster offener Punkt in `docs/roadmap-message-relay-v1.md`).
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
-- [ ] SRV-003.. : siehe `docs/roadmap-message-relay-v1.md`
+- [ ] SRV-007.. : siehe `docs/roadmap-message-relay-v1.md`
 - [ ] CLI-001.. : siehe `docs/roadmap-client-remote-transport-v1.md`
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)

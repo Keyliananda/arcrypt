@@ -31,6 +31,8 @@ Jeder Request auf mailbox Endpunkte muss Proof-of-Possession enthalten:
 Canonical string:
 `<method>\n<path>\n<ts>\n<nonce>\n<body_sha256_hex>`
 
+`body_sha256_hex` ist SHA-256 ueber den JSON-Body **ohne** Feld `proof`, mit stabiler Key-Sortierung.
+
 Proof:
 `proof = hex(HMAC_SHA256(mailbox_pop_key, canonical_string))`
 
@@ -38,6 +40,10 @@ Regeln:
 - `ts` darf max +/-300s vom Server abweichen.
 - `nonce` darf pro Mailbox innerhalb 15 Minuten nicht wiederverwendet werden.
 - `mailbox_pop_key` ist mailbox-spezifisch und wird serverseitig nur als Verifier/Commitment gespeichert.
+
+Implementierungsprofil (Server Stand 2026-02-09):
+- Fuer v1 bootstrap wird `mailbox_pop_key = mailbox_id` verwendet.
+- Server speichert dazu `pop_key_commitment = SHA256("pop:" + mailbox_id)` in `relay_mailboxes`.
 
 ## Objektmodell (API Ebene)
 - `mailbox_id`: base64url, 16-48 Bytes Entropie, rotiert clientseitig.

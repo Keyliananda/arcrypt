@@ -10,10 +10,10 @@ Nicht-Ziele:
 ## Taskliste (in Reihenfolge)
 - [x] SRV-001: “Untrusted Relay” Prinzip dokumentieren: Datenfluss, gespeicherte Felder, Retention, Logs (kurz, aber eindeutig). (done 2026-02-08; added `docs/untrusted-relay-principle-v1.md`)
 - [x] SRV-002: API v1 spezifizieren (Request/Response, Fehlercodes, Limits) fuer push/pull/ack. (done 2026-02-08; added `docs/message-relay-api-v1.md`)
-- [ ] SRV-003: Datenmodell + Migration (SQLite + optional MySQL) implementieren, inkl. expiry cleanup.
-- [ ] SRV-004: Abuse-Guard: size limits, rate limits, und Request-Proof (HMAC/PoP) pro Mailbox.
-- [ ] SRV-005: Implementierung im Node Server (neue Endpoints) inkl. Tests (`node --test`).
-- [ ] SRV-006: Wake Integration: Client-seitig Workflow definieren (push -> optional wake), Server-seitig bleibt Wake separat (wie `docs/server-roadmap.md`).
+- [x] SRV-003: Datenmodell + Migration (SQLite + optional MySQL) implementieren, inkl. expiry cleanup. (done 2026-02-08; added `server/src/migrations.js`, `server/migrations/sqlite/20260208_srv003_message_relay_v1.sql`, `server/migrations/mysql/20260208_srv003_message_relay_v1.sql`, `server/scripts/migrate.js`, `server/scripts/cleanup_relay_expiry.js`, updated `server/schema_sqlite.sql`, `server/schema.sql`, `server/src/store/sqlite.js`, `server/src/store/mysql.js`, `server/src/store/memory.js`, `server/test/migrations.test.js`)
+- [x] SRV-004: Abuse-Guard: size limits, rate limits, und Request-Proof (HMAC/PoP) pro Mailbox. (done 2026-02-09; updated `server/src/app.js`, `server/src/config.js`, `server/src/store/memory.js`, `server/src/store/sqlite.js`, `server/src/store/mysql.js`, `server/test/app.test.js`, `server/README.md`)
+- [x] SRV-005: Implementierung im Node Server (neue Endpoints) inkl. Tests (`node --test`). (done 2026-02-09; added `/v1/mailbox/push`, `/v1/mailbox/pull`, `/v1/mailbox/ack` in `server/src/app.js`, store support in `server/src/store/*`, and tests in `server/test/app.test.js`)
+- [x] SRV-006: Wake Integration: Client-seitig Workflow definieren (push -> optional wake), Server-seitig bleibt Wake separat (wie `docs/server-roadmap.md`). (done 2026-02-09; added `docs/wake-integration-workflow-v1.md`)
 - [ ] SRV-007: Privacy/DSGVO: Log-Policy, Retention-Policy, minimaler “Record of Processing” Entwurf, und Hoster-AVV Checkliste.
 - [ ] SRV-008: Deployment Runbook aktualisieren (Sparse Checkout), plus “prod hardening” (TLS-only, HSTS falls moeglich).
 

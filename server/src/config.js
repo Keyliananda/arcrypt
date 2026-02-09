@@ -21,7 +21,7 @@ function toBool(value, fallback) {
 
 const config = {
   port: toInt(process.env.PORT, 3000),
-  maxBodyBytes: toInt(process.env.MAX_BODY_BYTES, 8 * 1024),
+  maxBodyBytes: toInt(process.env.MAX_BODY_BYTES, 128 * 1024),
   hmacSecret: process.env.HMAC_SECRET || "",
   hmacMaxSkewSec: toInt(process.env.HMAC_MAX_SKEW_SEC, 300),
   rateLimit: {
@@ -37,6 +37,26 @@ const config = {
     user: process.env.DB_USER || "",
     password: process.env.DB_PASSWORD || "",
     database: process.env.DB_NAME || ""
+  },
+  relay: {
+    ackDeleteGraceSec: toInt(process.env.RELAY_ACK_DELETE_GRACE_SEC, 900),
+    proofMaxSkewSec: toInt(process.env.RELAY_PROOF_MAX_SKEW_SEC, 300),
+    nonceTtlSec: toInt(process.env.RELAY_NONCE_TTL_SEC, 900),
+    defaultExpirySec: toInt(process.env.RELAY_DEFAULT_EXPIRY_SEC, 86400),
+    minExpirySec: toInt(process.env.RELAY_MIN_EXPIRY_SEC, 60),
+    maxExpirySec: toInt(process.env.RELAY_MAX_EXPIRY_SEC, 604800),
+    maxCiphertextBytes: toInt(process.env.RELAY_MAX_CIPHERTEXT_BYTES, 64 * 1024),
+    maxPullLimit: toInt(process.env.RELAY_PULL_LIMIT_MAX, 100),
+    defaultPullLimit: toInt(process.env.RELAY_PULL_LIMIT_DEFAULT, 50),
+    maxAckMessageIds: toInt(process.env.RELAY_ACK_MAX_IDS, 100),
+    rateLimit: {
+      pushPerMailbox: toInt(process.env.RELAY_RATE_LIMIT_PUSH_PER_MAILBOX, 120),
+      pullPerMailbox: toInt(process.env.RELAY_RATE_LIMIT_PULL_PER_MAILBOX, 360),
+      ackPerMailbox: toInt(process.env.RELAY_RATE_LIMIT_ACK_PER_MAILBOX, 360),
+      pushPerIp: toInt(process.env.RELAY_RATE_LIMIT_PUSH_PER_IP, 1200),
+      pullPerIp: toInt(process.env.RELAY_RATE_LIMIT_PULL_PER_IP, 1200),
+      ackPerIp: toInt(process.env.RELAY_RATE_LIMIT_ACK_PER_IP, 1200)
+    }
   },
   apns: {
     enabled: toBool(process.env.APNS_ENABLED, true),

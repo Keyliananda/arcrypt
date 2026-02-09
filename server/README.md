@@ -1,6 +1,6 @@
-# Silent Wake Relay (Server)
+# Silent Wake + Message Relay (Server)
 
-Minimal API skeleton for the silent wake relay, matching Phase 1 of `docs/server-roadmap.md`.
+Node server for wake relay (`/v1/wake`) plus message relay v1 mailboxes (`/v1/mailbox/*`), matching `docs/server-roadmap.md` and `docs/roadmap-message-relay-v1.md`.
 
 ## Quick start
 
@@ -25,6 +25,12 @@ Apply the schema:
 sqlite3 ./data.sqlite < schema_sqlite.sql
 ```
 
+Run pending message-relay migrations:
+
+```bash
+npm run migrate
+```
+
 ## Deployment (Server)
 
 Files not in git that must exist on the server:
@@ -39,6 +45,7 @@ cd /path/to/repo/server
 cp /path/to/secure/.env ./ .env
 npm install --omit=dev
 sqlite3 ./data.sqlite < schema_sqlite.sql
+npm run migrate
 node src/server.js
 ```
 
@@ -56,7 +63,7 @@ node --test
 
 - `SERVER_ENABLED` (default: true) - Enable/disable server via watchdog
 - `PORT` (default: 3000)
-- `MAX_BODY_BYTES` (default: 8192)
+- `MAX_BODY_BYTES` (default: 131072)
 - `HMAC_SECRET` (required for `/v1/wake`)
 - `HMAC_MAX_SKEW_SEC` (default: 300)
 - `RATE_LIMIT_WINDOW_SEC` (default: 3600)
@@ -65,6 +72,22 @@ node --test
 - `DB_DRIVER` (`memory` or `sqlite`, `mysql` optional)
 - `DB_FILENAME` (SQLite filename)
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` (MySQL optional)
+- `RELAY_ACK_DELETE_GRACE_SEC` (default: 900; grace for deleting acked relay messages)
+- `RELAY_PROOF_MAX_SKEW_SEC` (default: 300)
+- `RELAY_NONCE_TTL_SEC` (default: 900)
+- `RELAY_DEFAULT_EXPIRY_SEC` (default: 86400)
+- `RELAY_MIN_EXPIRY_SEC` (default: 60)
+- `RELAY_MAX_EXPIRY_SEC` (default: 604800)
+- `RELAY_MAX_CIPHERTEXT_BYTES` (default: 65536)
+- `RELAY_PULL_LIMIT_DEFAULT` (default: 50)
+- `RELAY_PULL_LIMIT_MAX` (default: 100)
+- `RELAY_ACK_MAX_IDS` (default: 100)
+- `RELAY_RATE_LIMIT_PUSH_PER_MAILBOX` (default: 120)
+- `RELAY_RATE_LIMIT_PULL_PER_MAILBOX` (default: 360)
+- `RELAY_RATE_LIMIT_ACK_PER_MAILBOX` (default: 360)
+- `RELAY_RATE_LIMIT_PUSH_PER_IP` (default: 1200)
+- `RELAY_RATE_LIMIT_PULL_PER_IP` (default: 1200)
+- `RELAY_RATE_LIMIT_ACK_PER_IP` (default: 1200)
 - `APNS_ENABLED` (default: true)
 - `APNS_ENV` (`sandbox` or `prod`)
 - `APNS_KEY_ID` (Key ID from Apple)
@@ -121,7 +144,81 @@ If APNs config is present, `/v1/wake` attempts a silent push immediately and
 adds an `apns` field in the response with the result. If not configured, it
 only queues the wake request.
 
+### `/v1/mailbox/push`
+Body:
+
+```json
+{
+  "mailbox_id": "b64url_mailbox_id",
+  "ciphertext": "base64_ciphertext_blob",
+  "expires_in_sec": 86400,
+  "client_msg_id": "optional-idempotency-key",
+  "ts": 1738533200,
+  "nonce": "b64url_nonce_16_bytes_min",
+  "proof": "<hex hmac>"
+}
+```
+
+Response: `202` with `{ ok, message_id, expires_at, status }`.
+
+### `/v1/mailbox/pull`
+Body:
+
+```json
+{
+  "mailbox_id": "b64url_mailbox_id",
+  "cursor": null,
+  "limit": 50,
+  "ts": 1738533200,
+  "nonce": "b64url_nonce_16_bytes_min",
+  "proof": "<hex hmac>"
+}
+```
+
+Response: `200` with `{ ok, messages, next_cursor, has_more }`.
+
+### `/v1/mailbox/ack`
+Body:
+
+```json
+{
+  "mailbox_id": "b64url_mailbox_id",
+  "message_ids": ["msg_..."],
+  "ts": 1738533200,
+  "nonce": "b64url_nonce_16_bytes_min",
+  "proof": "<hex hmac>"
+}
+```
+
+Response: `200` with `{ ok, acked, unknown, already_acked }`.
+
+Mailbox proof canonical string:
+
+```
+POST\n<path>\n<ts>\n<nonce>\n<body_sha256_hex_without_proof_field>
+```
+
+Proof:
+
+```
+hex(HMAC_SHA256(mailbox_id, canonical_string))
+```
+
+Mailbox requests reject timestamps outside `RELAY_PROOF_MAX_SKEW_SEC` and
+reject nonce re-use inside `RELAY_NONCE_TTL_SEC`.
+
 ## Rate limiting
 
-Rate limits apply per token and per IP, per window. The counters are stored in
-`rate_limits` with a window start timestamp.
+Wake rate limits apply per token and per IP. Mailbox rate limits apply per
+mailbox hash and per IP, scoped by action (`push`, `pull`, `ack`). Counters are
+stored in `rate_limits` with a window start timestamp.
+
+## Relay expiry cleanup
+
+Run one cleanup pass for expired relay rows and aged acked rows:
+
+```bash
+npm run cleanup:relay
+```
+
+Use cron to run this every 5-15 minutes.

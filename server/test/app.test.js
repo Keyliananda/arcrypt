@@ -2,14 +2,39 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createApp, computeHmac } = require("../src/app");
+const {
+  createApp,
+  computeHmac,
+  computeMailboxProof,
+  hashMailboxProofBody
+} = require("../src/app");
 const { MemoryStore } = require("../src/store/memory");
 
 const FIXED_NOW = new Date("2026-02-02T12:00:00Z").getTime();
 
+function isObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function deepMerge(base, overrides) {
+  if (!isObject(overrides)) {
+    return overrides === undefined ? base : overrides;
+  }
+
+  const merged = { ...base };
+  for (const key of Object.keys(overrides)) {
+    if (isObject(base[key]) && isObject(overrides[key])) {
+      merged[key] = deepMerge(base[key], overrides[key]);
+    } else {
+      merged[key] = overrides[key];
+    }
+  }
+  return merged;
+}
+
 function makeApp(overrides = {}) {
   const store = new MemoryStore();
-  const config = {
+  const baseConfig = {
     hmacSecret: "test-secret",
     hmacMaxSkewSec: 300,
     rateLimit: {
@@ -17,8 +42,28 @@ function makeApp(overrides = {}) {
       perToken: 30,
       perIp: 120
     },
-    ...overrides
+    relay: {
+      proofMaxSkewSec: 300,
+      nonceTtlSec: 900,
+      defaultExpirySec: 86400,
+      minExpirySec: 60,
+      maxExpirySec: 604800,
+      maxCiphertextBytes: 65536,
+      maxPullLimit: 100,
+      defaultPullLimit: 50,
+      maxAckMessageIds: 100,
+      rateLimit: {
+        pushPerMailbox: 120,
+        pullPerMailbox: 360,
+        ackPerMailbox: 360,
+        pushPerIp: 1200,
+        pullPerIp: 1200,
+        ackPerIp: 1200
+      }
+    },
+    apns: { enabled: false }
   };
+  const config = deepMerge(baseConfig, overrides);
 
   const app = createApp({
     store,
@@ -41,6 +86,31 @@ async function call(app, payload) {
     status: response.status,
     json: response.body ? JSON.parse(response.body) : null
   };
+}
+
+function makeMailboxId(label) {
+  return Buffer.from(`mailbox-${label}`.padEnd(20, "x")).toString("base64url");
+}
+
+function makeNonce(label) {
+  return Buffer.from(`nonce-${label}`.padEnd(18, "y")).toString("base64url");
+}
+
+function signMailboxBody(path, body, mailboxId, ts, nonce) {
+  const unsigned = {
+    ...body,
+    mailbox_id: mailboxId,
+    ts,
+    nonce
+  };
+  const proof = computeMailboxProof(mailboxId, {
+    method: "POST",
+    path,
+    ts,
+    nonce,
+    bodySha256Hex: hashMailboxProofBody(unsigned)
+  });
+  return { ...unsigned, proof };
 }
 
 test("health endpoint responds ok", async () => {
@@ -157,4 +227,226 @@ test("rate limit blocks repeated register", async () => {
   });
   assert.equal(second.status, 429);
   assert.equal(second.json.error, "rate_limit");
+});
+
+test("mailbox push pull ack flow works", async () => {
+  const { app } = makeApp();
+  const mailboxId = makeMailboxId("flow");
+  const ts = Math.floor(FIXED_NOW / 1000);
+
+  const pushBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("hello-relay").toString("base64"),
+      client_msg_id: "client-1"
+    },
+    mailboxId,
+    ts,
+    makeNonce("push1")
+  );
+
+  const push = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(pushBody)
+  });
+  assert.equal(push.status, 202);
+  assert.ok(push.json.message_id);
+
+  const pullBody = signMailboxBody(
+    "/v1/mailbox/pull",
+    {
+      cursor: null,
+      limit: 10
+    },
+    mailboxId,
+    ts,
+    makeNonce("pull1")
+  );
+
+  const pull = await call(app, {
+    path: "/v1/mailbox/pull",
+    body: JSON.stringify(pullBody)
+  });
+  assert.equal(pull.status, 200);
+  assert.equal(pull.json.messages.length, 1);
+  assert.equal(pull.json.messages[0].message_id, push.json.message_id);
+
+  const ackBody = signMailboxBody(
+    "/v1/mailbox/ack",
+    {
+      message_ids: [push.json.message_id]
+    },
+    mailboxId,
+    ts,
+    makeNonce("ack1")
+  );
+
+  const ack = await call(app, {
+    path: "/v1/mailbox/ack",
+    body: JSON.stringify(ackBody)
+  });
+  assert.equal(ack.status, 200);
+  assert.deepEqual(ack.json.acked, [push.json.message_id]);
+
+  const ackAgainBody = signMailboxBody(
+    "/v1/mailbox/ack",
+    {
+      message_ids: [push.json.message_id]
+    },
+    mailboxId,
+    ts,
+    makeNonce("ack2")
+  );
+
+  const ackAgain = await call(app, {
+    path: "/v1/mailbox/ack",
+    body: JSON.stringify(ackAgainBody)
+  });
+  assert.equal(ackAgain.status, 200);
+  assert.deepEqual(ackAgain.json.already_acked, [push.json.message_id]);
+});
+
+test("mailbox rejects nonce replay", async () => {
+  const { app } = makeApp();
+  const mailboxId = makeMailboxId("replay");
+  const ts = Math.floor(FIXED_NOW / 1000);
+  const nonce = makeNonce("same");
+
+  const firstBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("first").toString("base64"),
+      client_msg_id: "cmid-1"
+    },
+    mailboxId,
+    ts,
+    nonce
+  );
+
+  const first = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(firstBody)
+  });
+  assert.equal(first.status, 202);
+
+  const secondBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("second").toString("base64"),
+      client_msg_id: "cmid-2"
+    },
+    mailboxId,
+    ts,
+    nonce
+  );
+
+  const second = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(secondBody)
+  });
+  assert.equal(second.status, 401);
+  assert.equal(second.json.error, "nonce_replay");
+});
+
+test("mailbox push rate limit is enforced", async () => {
+  const { app } = makeApp({
+    relay: {
+      rateLimit: {
+        pushPerMailbox: 1,
+        pushPerIp: 1000
+      }
+    }
+  });
+  const mailboxId = makeMailboxId("rl");
+  const ts = Math.floor(FIXED_NOW / 1000);
+
+  const firstBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("one").toString("base64"),
+      client_msg_id: "rl-1"
+    },
+    mailboxId,
+    ts,
+    makeNonce("rl1")
+  );
+
+  const first = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(firstBody)
+  });
+  assert.equal(first.status, 202);
+
+  const secondBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("two").toString("base64"),
+      client_msg_id: "rl-2"
+    },
+    mailboxId,
+    ts,
+    makeNonce("rl2")
+  );
+
+  const second = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(secondBody)
+  });
+  assert.equal(second.status, 429);
+  assert.equal(second.json.error, "rate_limit");
+  assert.equal(second.json.details.scope, "mailbox");
+});
+
+test("mailbox push rejects oversized ciphertext", async () => {
+  const { app } = makeApp({
+    relay: {
+      maxCiphertextBytes: 4
+    }
+  });
+  const mailboxId = makeMailboxId("size");
+  const ts = Math.floor(FIXED_NOW / 1000);
+
+  const pushBody = signMailboxBody(
+    "/v1/mailbox/push",
+    {
+      ciphertext: Buffer.from("too-big").toString("base64"),
+      client_msg_id: "size-1"
+    },
+    mailboxId,
+    ts,
+    makeNonce("size1")
+  );
+
+  const response = await call(app, {
+    path: "/v1/mailbox/push",
+    body: JSON.stringify(pushBody)
+  });
+
+  assert.equal(response.status, 413);
+  assert.equal(response.json.error, "ciphertext_too_large");
+});
+
+test("mailbox pull for unknown mailbox returns 404", async () => {
+  const { app } = makeApp();
+  const mailboxId = makeMailboxId("missing");
+  const ts = Math.floor(FIXED_NOW / 1000);
+
+  const pullBody = signMailboxBody(
+    "/v1/mailbox/pull",
+    {
+      cursor: null,
+      limit: 5
+    },
+    mailboxId,
+    ts,
+    makeNonce("missing")
+  );
+
+  const response = await call(app, {
+    path: "/v1/mailbox/pull",
+    body: JSON.stringify(pullBody)
+  });
+
+  assert.equal(response.status, 404);
+  assert.equal(response.json.error, "mailbox_not_found");
 });

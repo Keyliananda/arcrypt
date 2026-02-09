@@ -5,7 +5,9 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "migrate": "node scripts/migrate.js",
+    "cleanup:relay": "node scripts/cleanup_relay_expiry.js"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
