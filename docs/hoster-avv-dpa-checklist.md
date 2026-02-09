@@ -19,6 +19,14 @@ Vertragliche und organisatorische Punkte mit dem Hoster strukturiert finalisiere
   2. Je AVV-* Punkt Status/Nachweis in dieser Checkliste aktualisieren.
   3. Wenn AVV-01..AVV-08 alle `done` sind, `docs/grant-roadmap.md` auf erledigt setzen.
 
+## Verbindliche Timeline (PRIV-002)
+| Meilenstein | Datum | Zielkriterium | Owner |
+| --- | --- | --- | --- |
+| Versand Anfragepaket + Ticket-ID erfassen | 2026-02-09 | Ticket-/Mailreferenz in `docs/hoster-avv-dpa-response-log.md` vorhanden | PRSM Team |
+| Follow-up 1 | 2026-02-12 | Rueckmeldung je AVV-* Punkt oder Eskalation gestartet | PRSM Team |
+| Follow-up 2 (Eskalation) | 2026-02-17 | Fehlende Nachweise priorisiert und erneut angefordert | PRSM Team |
+| Follow-up 3 (Finale Eskalation) | 2026-02-20 | Restpunkte AVV-01..AVV-08 mit Deadline beim Hoster versehen | PRSM Team |
+
 ## Pflichtpunkte
 | ID | Punkt | Status | Nachweis | Letzter Kontakt | Naechster Schritt |
 | --- | --- | --- | --- | --- | --- |
@@ -44,11 +52,12 @@ Vertragliche und organisatorische Punkte mit dem Hoster strukturiert finalisiere
 | 2026-02-09 | Hoster Support (offen) | Checklist initialisiert | Vorbereitung abgeschlossen | Dieses Dokument |
 | 2026-02-09 | Hoster Support (offen) | Vollstaendiges Anfragepaket fuer AVV/SLA erstellt | Externe Klaerung gestartet (`in_review`) | `docs/hoster-avv-dpa-request-v1.md` |
 | 2026-02-09 | Intern (PRSM Team) | Antwort-/Nachweislog strukturiert angelegt | Abschlussstrecke fuer `PRIV-002` vorbereitet | `docs/hoster-avv-dpa-response-log.md` |
+| 2026-02-09 | Intern (PRSM Team) | Verbindliche Follow-up-Timeline festgelegt | Externe Abschlussstrecke terminiert | Dieses Dokument |
 
 ## Naechste externe Aktion
-1. Anfrage aus `docs/hoster-avv-dpa-request-v1.md` an den Hoster senden bzw. Ticket-Referenz erfassen.
-2. Jede Rueckmeldung sofort in `docs/hoster-avv-dpa-response-log.md` dokumentieren.
-3. Nachweise pro AVV-* Punkt in dieser Checkliste verlinken und Status schrittweise auf `done` umstellen.
+1. Bis 2026-02-09: Anfrage aus `docs/hoster-avv-dpa-request-v1.md` an den Hoster senden und Ticket-Referenz im Antwortlog erfassen.
+2. Bis 2026-02-12: Falls keine vollstaendige Antwort vorliegt, Follow-up 1 inkl. Eskalationshinweis dokumentieren.
+3. Ab 2026-02-17 und 2026-02-20: Offene AVV-* Punkte eskalieren und erst nach belastbarem Nachweis auf `done` setzen.
 
 ## DoD fuer PRIV-002
 - Alle Punkte `AVV-01` bis `AVV-08` auf `done`.

@@ -50,9 +50,11 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - Privacy/DSGVO gestartet: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (siehe `docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09).
 - PRIV-002 in Review: AVV/DPA + Incident-SLA Anfragepaket erstellt (`docs/hoster-avv-dpa-checklist.md`, `docs/hoster-avv-dpa-request-v1.md`, 2026-02-09); vertragliche Bestaetigungen durch Hoster stehen aus.
 - PRIV-002 Vorbereitung intern erweitert: Follow-up-/Antworttracking fuer AVV-01..AVV-08 dokumentiert (`docs/hoster-avv-dpa-checklist.md`, `docs/hoster-avv-dpa-response-log.md`, done 2026-02-09).
+- PRIV-002 Ausfuehrung konkretisiert: verbindliche Follow-up-Timeline mit festen Daten (2026-02-12, 2026-02-17, 2026-02-20) und Outbound-Tracking vorbereitet (`docs/hoster-avv-dpa-checklist.md`, `docs/hoster-avv-dpa-response-log.md`, done 2026-02-09).
 - PRIV-003 abgeschlossen: Art.-30 Eintrag + Privacy Policy v1 mit Betreiber- und Rechtsgrundlagenangaben finalisiert (`docs/art30-record-prsm-v1.md`, `docs/privacy-policy-prsm-draft-v1.md`, done 2026-02-09).
 - Server-Roadmap Phase 3 Luecke geschlossen: Wake-Token TTL + Cleanup-Job implementiert (`server/scripts/cleanup_wake_tokens.js`, `WAKE_TOKEN_TTL_SEC`, done 2026-02-09).
-- Naechster konkreter Task: Hoster-Rueckmeldungen fuer AVV-01..AVV-08 im Antwortlog erfassen, Nachweise in die Checkliste uebernehmen und danach `PRIV-002` auf done setzen.
+- Interner DSGVO-Teilpunkt abgeschlossen: Zugangskontrolle fuer Deploy- und DB-Zugriffe dokumentiert (`docs/notes/deployment_server.md`, `docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09).
+- Naechster konkreter Task: Ticket-Referenz des Hoster-Anfrageversands im Antwortlog eintragen und danach AVV-01..AVV-08 entlang der Follow-up-Timeline auf `done` ueberfuehren.
 
 ## Taskliste (high level, nur Navigation)
 - [x] SEC-001..SEC-009 : siehe `docs/roadmap-security-v2.md` (done 2026-02-08)
@@ -62,6 +64,11 @@ Wenn in einem neuen Chat nur "fuehre den naechsten Task aus" steht, ist die Erwa
 - [x] PRIV-001: Betroffenenrechte-Verfahren + interner Incident-Prozess dokumentiert (`docs/privacy-dsgvo-message-relay-v1.md`, done 2026-02-09)
 - [ ] PRIV-002: AVV/DPA + Incident-SLA mit Hoster finalisieren (extern, vertraglich; in_review via `docs/hoster-avv-dpa-checklist.md` + `docs/hoster-avv-dpa-request-v1.md` + `docs/hoster-avv-dpa-response-log.md`, 2026-02-09)
 - [x] PRIV-003: Betreiberdaten fuer Art.-30 Eintrag und Privacy Policy v1 final ergaenzt (`docs/art30-record-prsm-v1.md`, `docs/privacy-policy-prsm-draft-v1.md`, done 2026-02-09)
+
+## Naechste Schritte (ab 2026-02-09)
+1. Hoster-Anfrage versenden und Ticket-ID in `docs/hoster-avv-dpa-response-log.md` eintragen (Faelligkeit: 2026-02-09).
+2. Erstes Follow-up am 2026-02-12 eintragen, wenn bis dahin keine belastbare Rueckmeldung zu AVV-01..AVV-08 vorliegt.
+3. Eskalations-Follow-ups am 2026-02-17 und 2026-02-20 durchfuehren und je Punkt Nachweise in `docs/hoster-avv-dpa-checklist.md` auf `done` ziehen.
 
 ## Zwei alternative Ausloeser (gleiches Verhalten)
 Diese Formulierungen sollen identisch behandelt werden wie "fuehre den naechsten Task aus":

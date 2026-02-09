@@ -86,7 +86,7 @@ Arbeitsdokumente: `docs/hoster-avv-dpa-checklist.md` und `docs/hoster-avv-dpa-re
 - [ ] Incident-/Breach-Meldeprozess inkl. SLA geklaert.
 - [ ] Log-Aufbewahrung beim Hoster geklaert (Dauer, Zugriff, Export, Loeschung).
 - [ ] Backup/Restore-Strategie auf Datenminimierung und Retention abgestimmt.
-- [ ] Zugangskontrolle fuer Deploy- und DB-Zugriffe dokumentiert.
+- [x] Zugangskontrolle fuer Deploy- und DB-Zugriffe dokumentiert. (done 2026-02-09; siehe `docs/notes/deployment_server.md`, Abschnitt "9) Zugangskontrolle (Deploy + DB)")
 - [x] Verfahren fuer Betroffenenrechte definiert (Auskunft/Loeschung im Minimaldatenmodell). (done 2026-02-09; siehe Abschnitt 6)
 
 ## 5) Operative Mindestkontrollen

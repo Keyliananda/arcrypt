@@ -143,3 +143,22 @@ Server:
 ```bash
 git clone <server-remote> .
 ```
+
+## 9) Zugangskontrolle (Deploy + DB)
+
+Mindestregeln fuer Produktion:
+- Eigener Deploy-User ohne `sudo`; Login nur per SSH-Key, Passwortlogin deaktivieren.
+- Schreibrechte auf `~/deploy/prsm/server` nur fuer Deploy-User; keine geteilten Accounts.
+- `.env` nur lokal auf dem Host, nie im Git; Dateirechte auf `600`.
+- SQLite-Datei (`data.sqlite`) nur fuer Deploy-User les-/schreibbar; Dateirechte auf `600`.
+- Rotierbare Secrets (`HMAC_SECRET`, APNs Key) nur ueber gesicherten Admin-Kanal austauschen und Wechsel im Incident-/Change-Ticket dokumentieren.
+- DB-Zugriffe fuer Betrieb/Support nur need-to-know und ticketgebunden.
+
+Beispielrechte (SQLite Deploy):
+
+```bash
+chmod 700 /home/<user>/deploy/prsm
+chmod 700 /home/<user>/deploy/prsm/server
+chmod 600 /home/<user>/deploy/prsm/server/.env
+chmod 600 /home/<user>/deploy/prsm/server/data.sqlite
+```

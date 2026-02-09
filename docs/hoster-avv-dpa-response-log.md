@@ -28,7 +28,13 @@ Zentrale Sammelstelle fuer alle eingehenden Hoster-Antworten zu AVV/DPA und Inci
 | AVV-07 | Incident/Breach-Meldeprozess mit Zeitgrenzen | in_review | ausstehend | 2026-02-09 | Zeitgrenzen fehlen | Incident-SLA schriftlich bestaetigen lassen |
 | AVV-08 | Security-Notfallkontakt und Erreichbarkeit | in_review | ausstehend | 2026-02-09 | Kontaktweg fehlt | Notfallkanal + Servicezeiten dokumentieren |
 
+## Outbound-Tracking (Ticketversand + Follow-ups)
+| Tracking-ID | Kanal | Status | Erstversand | Naechster Termin | Referenz |
+| --- | --- | --- | --- | --- | --- |
+| HOSTER-REQ-2026-02-09 | Mail/Ticket | vorbereitet, Versand ausstehend | 2026-02-09 | 2026-02-12 (Follow-up 1) | `docs/hoster-avv-dpa-request-v1.md` |
+
 ## Antwort-Chronik
 | Datum | Quelle | Betroffene IDs | Kurzinhalt | Nachweis-Link |
 | --- | --- | --- | --- | --- |
 | 2026-02-09 | Intern | AVV-01..AVV-08 | Logstruktur erstellt, wartet auf externe Antworten | Dieses Dokument |
+| 2026-02-09 | Intern | AVV-01..AVV-08 | Outbound-Tracking und feste Follow-up-Termine ergaenzt | Dieses Dokument |
