@@ -22,6 +22,14 @@ function toBool(value, fallback) {
 const config = {
   port: toInt(process.env.PORT, 3000),
   maxBodyBytes: toInt(process.env.MAX_BODY_BYTES, 128 * 1024),
+  security: {
+    tlsOnly: toBool(process.env.SECURITY_TLS_ONLY, false),
+    trustProxy: toBool(process.env.SECURITY_TRUST_PROXY, true),
+    hstsEnabled: toBool(process.env.SECURITY_HSTS_ENABLED, false),
+    hstsMaxAgeSec: toInt(process.env.SECURITY_HSTS_MAX_AGE_SEC, 15552000),
+    hstsIncludeSubdomains: toBool(process.env.SECURITY_HSTS_INCLUDE_SUBDOMAINS, false),
+    hstsPreload: toBool(process.env.SECURITY_HSTS_PRELOAD, false)
+  },
   hmacSecret: process.env.HMAC_SECRET || "",
   hmacMaxSkewSec: toInt(process.env.HMAC_MAX_SKEW_SEC, 300),
   rateLimit: {

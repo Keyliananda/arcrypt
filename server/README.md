@@ -64,6 +64,12 @@ node --test
 - `SERVER_ENABLED` (default: true) - Enable/disable server via watchdog
 - `PORT` (default: 3000)
 - `MAX_BODY_BYTES` (default: 131072)
+- `SECURITY_TLS_ONLY` (default: false; reject non-TLS requests with `426 tls_required`)
+- `SECURITY_TRUST_PROXY` (default: true; trust `X-Forwarded-Proto`/`X-Forwarded-SSL` from reverse proxy)
+- `SECURITY_HSTS_ENABLED` (default: false; add HSTS response header on TLS requests)
+- `SECURITY_HSTS_MAX_AGE_SEC` (default: 15552000)
+- `SECURITY_HSTS_INCLUDE_SUBDOMAINS` (default: false)
+- `SECURITY_HSTS_PRELOAD` (default: false)
 - `HMAC_SECRET` (required for `/v1/wake`)
 - `HMAC_MAX_SKEW_SEC` (default: 300)
 - `RATE_LIMIT_WINDOW_SEC` (default: 3600)
@@ -222,3 +228,14 @@ npm run cleanup:relay
 ```
 
 Use cron to run this every 5-15 minutes.
+
+## TLS-only + HSTS (production)
+
+For production behind nginx:
+
+- Set `SECURITY_TLS_ONLY=true`
+- Keep `SECURITY_TRUST_PROXY=true`
+- Forward `X-Forwarded-Proto https` from nginx
+- Optionally set `SECURITY_HSTS_ENABLED=true` once HTTPS is stable
+
+This enforces TLS at the app layer and allows adding HSTS centrally.

@@ -234,6 +234,63 @@ function relayConfigFrom(config) {
   };
 }
 
+function readHeader(headers, name) {
+  if (!headers || typeof headers !== "object") {
+    return "";
+  }
+  const direct = headers[name];
+  if (typeof direct === "string") {
+    return direct;
+  }
+  const lower = headers[name.toLowerCase()];
+  return typeof lower === "string" ? lower : "";
+}
+
+function isTlsRequest(headers, config) {
+  const security = config.security || {};
+
+  if (security.trustProxy !== false) {
+    const forwardedProto = readHeader(headers, "x-forwarded-proto");
+    if (forwardedProto) {
+      const primaryProto = forwardedProto.split(",")[0].trim().toLowerCase();
+      if (primaryProto === "https") {
+        return true;
+      }
+    }
+
+    const forwardedSsl = readHeader(headers, "x-forwarded-ssl").trim().toLowerCase();
+    if (forwardedSsl === "on") {
+      return true;
+    }
+  }
+
+  return readHeader(headers, ":scheme").trim().toLowerCase() === "https";
+}
+
+function applySecurityHeaders(response, headers, config) {
+  const security = config.security || {};
+  const result = {
+    ...response,
+    headers: {
+      ...(response.headers || {})
+    }
+  };
+
+  if (security.hstsEnabled && isTlsRequest(headers, config)) {
+    const maxAge = Number.isFinite(security.hstsMaxAgeSec) ? security.hstsMaxAgeSec : 15552000;
+    let hsts = `max-age=${maxAge}`;
+    if (security.hstsIncludeSubdomains) {
+      hsts += "; includeSubDomains";
+    }
+    if (security.hstsPreload) {
+      hsts += "; preload";
+    }
+    result.headers["strict-transport-security"] = hsts;
+  }
+
+  return result;
+}
+
 function createApp({ store, config, now = Date.now }) {
   const relayConfig = relayConfigFrom(config);
 
@@ -625,44 +682,50 @@ function createApp({ store, config, now = Date.now }) {
   }
 
   async function handle({ method, path, headers, body, ip }) {
+    const withSecurityHeaders = (response) => applySecurityHeaders(response, headers, config);
+
+    if (config.security && config.security.tlsOnly && !isTlsRequest(headers, config)) {
+      return withSecurityHeaders(errorResponse(426, "tls_required"));
+    }
+
     if (method !== "POST") {
-      return errorResponse(405, "method_not_allowed");
+      return withSecurityHeaders(errorResponse(405, "method_not_allowed"));
     }
 
     if (path === "/v1/health") {
-      return jsonResponse(200, { ok: true, status: "ok" });
+      return withSecurityHeaders(jsonResponse(200, { ok: true, status: "ok" }));
     }
 
     const parsed = parseJsonBody(body);
     if (!parsed.ok) {
-      return errorResponse(400, parsed.error);
+      return withSecurityHeaders(errorResponse(400, parsed.error));
     }
 
     if (path === "/v1/register") {
-      return handleRegister(parsed.value, ip);
+      return withSecurityHeaders(await handleRegister(parsed.value, ip));
     }
 
     if (path === "/v1/unregister") {
-      return handleUnregister(parsed.value);
+      return withSecurityHeaders(await handleUnregister(parsed.value));
     }
 
     if (path === "/v1/wake") {
-      return handleWake(parsed.value, ip);
+      return withSecurityHeaders(await handleWake(parsed.value, ip));
     }
 
     if (path === "/v1/mailbox/push") {
-      return handleMailboxPush(parsed.value, path, ip);
+      return withSecurityHeaders(await handleMailboxPush(parsed.value, path, ip));
     }
 
     if (path === "/v1/mailbox/pull") {
-      return handleMailboxPull(parsed.value, path, ip);
+      return withSecurityHeaders(await handleMailboxPull(parsed.value, path, ip));
     }
 
     if (path === "/v1/mailbox/ack") {
-      return handleMailboxAck(parsed.value, path, ip);
+      return withSecurityHeaders(await handleMailboxAck(parsed.value, path, ip));
     }
 
-    return errorResponse(404, "not_found");
+    return withSecurityHeaders(errorResponse(404, "not_found"));
   }
 
   return { handle };

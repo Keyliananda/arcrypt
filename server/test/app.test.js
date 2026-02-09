@@ -35,6 +35,14 @@ function deepMerge(base, overrides) {
 function makeApp(overrides = {}) {
   const store = new MemoryStore();
   const baseConfig = {
+    security: {
+      tlsOnly: false,
+      trustProxy: true,
+      hstsEnabled: false,
+      hstsMaxAgeSec: 15552000,
+      hstsIncludeSubdomains: false,
+      hstsPreload: false
+    },
     hmacSecret: "test-secret",
     hmacMaxSkewSec: 300,
     rateLimit: {
@@ -78,12 +86,13 @@ async function call(app, payload) {
   const response = await app.handle({
     method: payload.method || "POST",
     path: payload.path,
-    headers: {},
+    headers: payload.headers || {},
     body: payload.body || "",
     ip: payload.ip || "203.0.113.10"
   });
   return {
     status: response.status,
+    headers: response.headers || {},
     json: response.body ? JSON.parse(response.body) : null
   };
 }
@@ -118,6 +127,37 @@ test("health endpoint responds ok", async () => {
   const result = await call(app, { path: "/v1/health" });
   assert.equal(result.status, 200);
   assert.deepEqual(result.json, { ok: true, status: "ok" });
+});
+
+test("tls only rejects non-tls requests", async () => {
+  const { app } = makeApp({
+    security: {
+      tlsOnly: true
+    }
+  });
+  const result = await call(app, { path: "/v1/health" });
+  assert.equal(result.status, 426);
+  assert.equal(result.json.error, "tls_required");
+});
+
+test("tls-only accepts forwarded https and adds hsts when enabled", async () => {
+  const { app } = makeApp({
+    security: {
+      tlsOnly: true,
+      hstsEnabled: true,
+      hstsMaxAgeSec: 86400,
+      hstsIncludeSubdomains: true
+    }
+  });
+  const result = await call(app, {
+    path: "/v1/health",
+    headers: { "x-forwarded-proto": "https" }
+  });
+  assert.equal(result.status, 200);
+  assert.equal(
+    result.headers["strict-transport-security"],
+    "max-age=86400; includeSubDomains"
+  );
 });
 
 test("register validates fields", async () => {

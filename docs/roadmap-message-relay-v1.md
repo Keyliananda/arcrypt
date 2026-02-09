@@ -14,8 +14,8 @@ Nicht-Ziele:
 - [x] SRV-004: Abuse-Guard: size limits, rate limits, und Request-Proof (HMAC/PoP) pro Mailbox. (done 2026-02-09; updated `server/src/app.js`, `server/src/config.js`, `server/src/store/memory.js`, `server/src/store/sqlite.js`, `server/src/store/mysql.js`, `server/test/app.test.js`, `server/README.md`)
 - [x] SRV-005: Implementierung im Node Server (neue Endpoints) inkl. Tests (`node --test`). (done 2026-02-09; added `/v1/mailbox/push`, `/v1/mailbox/pull`, `/v1/mailbox/ack` in `server/src/app.js`, store support in `server/src/store/*`, and tests in `server/test/app.test.js`)
 - [x] SRV-006: Wake Integration: Client-seitig Workflow definieren (push -> optional wake), Server-seitig bleibt Wake separat (wie `docs/server-roadmap.md`). (done 2026-02-09; added `docs/wake-integration-workflow-v1.md`)
-- [ ] SRV-007: Privacy/DSGVO: Log-Policy, Retention-Policy, minimaler “Record of Processing” Entwurf, und Hoster-AVV Checkliste.
-- [ ] SRV-008: Deployment Runbook aktualisieren (Sparse Checkout), plus “prod hardening” (TLS-only, HSTS falls moeglich).
+- [x] SRV-007: Privacy/DSGVO: Log-Policy, Retention-Policy, minimaler “Record of Processing” Entwurf, und Hoster-AVV Checkliste. (done 2026-02-09; added `docs/privacy-dsgvo-message-relay-v1.md`)
+- [x] SRV-008: Deployment Runbook aktualisieren (Sparse Checkout), plus “prod hardening” (TLS-only, HSTS falls moeglich). (done 2026-02-09; updated `docs/notes/deployment_server.md`, `server/src/config.js`, `server/src/app.js`, `server/test/app.test.js`, `server/README.md`)
 
 ## Architektur (kurz)
 - Server bietet “Mailboxes” an, adressiert ueber rotierende IDs (aus einem Shared Secret abgeleitet).
