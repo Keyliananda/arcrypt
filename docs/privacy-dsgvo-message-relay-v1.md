@@ -83,7 +83,7 @@ Vor Produktion abhaken:
 - [ ] Log-Aufbewahrung beim Hoster geklaert (Dauer, Zugriff, Export, Loeschung).
 - [ ] Backup/Restore-Strategie auf Datenminimierung und Retention abgestimmt.
 - [ ] Zugangskontrolle fuer Deploy- und DB-Zugriffe dokumentiert.
-- [ ] Verfahren fuer Betroffenenrechte definiert (Auskunft/Loeschung im Minimaldatenmodell).
+- [x] Verfahren fuer Betroffenenrechte definiert (Auskunft/Loeschung im Minimaldatenmodell). (done 2026-02-09; siehe Abschnitt 6)
 
 ## 5) Operative Mindestkontrollen
 
@@ -93,3 +93,60 @@ Vor Produktion abhaken:
   - `SECURITY_HSTS_ENABLED=true` (nach HTTPS-Stabilisierung)
 - Reverse Proxy setzt `X-Forwarded-Proto=https`.
 - Regelmaessige Pruefung, dass Cleanup-Cron aktiv ist.
+
+## 6) Verfahren fuer Betroffenenrechte (Minimaldatenmodell)
+
+Ziel: Rechteabwicklung ohne zentrale Accounts und ohne Klartextinhalte.
+
+Eingang und Fristen:
+- Eingangskanal: dedizierte Support-Adresse mit Ticket-ID.
+- Erstreaktion innerhalb von 72h, Abschluss innerhalb von 30 Tagen (Regelfall).
+- Jeder Fall wird als "privacy-request" protokolliert (nur Ticket-ID + Zeitstempel + Ergebnis).
+
+Identifikation (ohne globale IDs):
+- Wake-bezogene Anfrage: Nachweis ueber Besitz des Device Tokens (Token muss vom Geraet geliefert werden).
+- Relay-bezogene Anfrage: Nachweis ueber Besitz der mailbox_id (oder mailbox_id_hash) des betroffenen Clients.
+- Wenn kein plausibler Nachweis vorliegt, erfolgt nur allgemeine Auskunft zum Datenmodell, keine objektscharfe Auskunft.
+
+Auskunft (Art. 15, minimal):
+- Mitgeteilt werden nur technische Kategorien und gespeicherte Datensaetze:
+  - Device-Token-Eintrag (vorhanden/nicht vorhanden, env, last_seen, expires_at).
+  - Wake-Request-Metadaten (status/attempts/created_at).
+  - Relay-Metadaten je mailbox_id_hash (Anzahl un-acked Messages, aeltester/newester Zeitstempel, keine Inhalte).
+- Es werden keine Ciphertext-Inhalte ausgegeben.
+
+Loeschung (Art. 17, minimal):
+- Wake-Daten: `device_tokens` Eintrag loeschen, zugehoerige kuenftige Wake-Nutzung stoppen.
+- Relay-Daten: alle offenen/acked Nachrichten, Nonces und optional Rate-Limit-Counter zur mailbox_id_hash entfernen.
+- Ergebnis als Ticketabschluss dokumentieren (Zeitpunkt, welche Tabellen betroffen waren, ohne Roh-Token im Tickettext).
+
+Einschraenkung:
+- Ohne stabile Nutzerkonten kann keine personenbezogene Profil-Auskunft erstellt werden.
+- Das Verfahren ist daher strikt datenobjekt-basiert (Token/mailbox_id_hash), nicht personenbasiert.
+
+## 7) Incident-/Breach-Prozess (intern)
+
+Ziel: schnelle Eindammung, belastbare Dokumentation, rechtzeitige Bewertung der Meldepflicht.
+
+T0 - Erkennung und Triage (0-4h):
+- Incident Ticket anlegen (`security-incident-<date>-<id>`), Severity S1-S3 setzen.
+- Sofortpruefung: betrifft es Vertraulichkeit, Integritaet oder Verfuegbarkeit?
+- Erste Schutzmassnahmen: Schluesselrotation, Token-Rotation, Rate-Limits verschaerfen, notfalls Endpoint temporaer deaktivieren.
+
+T1 - Eindammung und Analyse (bis 24h):
+- Betroffene Systeme/Tabellen identifizieren (`device_tokens`, `wake_requests`, `relay_*`, Host-Logs).
+- Umfang bestimmen: Datentypen, Zeitfenster, Anzahl Datensaetze, moeglicher Abfluss.
+- Forensik-Artefakte sichern (Logs, DB-Snapshots, Config-Stand), Zugriffsrechte auf Incident-Kreis begrenzen.
+
+T2 - Bewertung und Meldung (24-72h):
+- DSGVO-Bewertung durch Verantwortliche Stelle: Risiko fuer Betroffene ja/nein.
+- Falls meldepflichtig: Meldung an Aufsichtsbehoerde innerhalb 72h vorbereiten und absenden.
+- Falls hohes Risiko fuer Betroffene: Benachrichtigung der Betroffenen nach Rechtspruefung vorbereiten.
+
+T3 - Abschluss und Nacharbeit:
+- Root-Cause und Corrective Actions dokumentieren.
+- Konkrete Follow-ups mit Owner + Due Date festhalten.
+- Runbooks, Hoster-AVV-Checkliste und technische Kontrollen nachziehen.
+
+Hinweis:
+- Externe SLA-/Meldepflichten mit dem Hoster bleiben separat in Abschnitt 4 offen, bis vertraglich bestaetigt.
