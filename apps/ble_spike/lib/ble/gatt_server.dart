@@ -37,12 +37,17 @@ class GattServer implements TransportLink {
       StreamController.broadcast();
   final StreamController<bool> _connectionController =
       StreamController.broadcast();
+  final StreamController<bool> _advertisingController =
+      StreamController.broadcast();
 
   /// Stream of inbound data from Central
   Stream<Uint8List> get inbound => _inboundController.stream;
 
   /// Stream of connection state changes
   Stream<bool> get connectionState => _connectionController.stream;
+
+  /// Stream of advertising state changes
+  Stream<bool> get advertisingState => _advertisingController.stream;
 
   /// Whether the server is running
   bool get isRunning => _isRunning;
@@ -239,7 +244,7 @@ class GattServer implements TransportLink {
     );
 
     await _peripheral.startAdvertising(advertisement);
-    _isAdvertising = true;
+    _setAdvertising(true);
     _log('Advertising started');
   }
 
@@ -248,7 +253,7 @@ class GattServer implements TransportLink {
     if (!_isAdvertising) return;
 
     await _peripheral.stopAdvertising();
-    _isAdvertising = false;
+    _setAdvertising(false);
     _log('Advertising stopped');
   }
 
@@ -272,9 +277,17 @@ class GattServer implements TransportLink {
   /// Handle BLE being disabled
   void _handleBleDisabled() {
     _log('BLE disabled, cleaning up...');
-    _isAdvertising = false;
+    _setAdvertising(false);
     _connectedCentral = null;
     _connectionController.add(false);
+  }
+
+  void _setAdvertising(bool value) {
+    if (_isAdvertising == value) {
+      return;
+    }
+    _isAdvertising = value;
+    _advertisingController.add(value);
   }
 
   /// Stop the server and clean up
@@ -306,5 +319,6 @@ class GattServer implements TransportLink {
     await stop();
     await _inboundController.close();
     await _connectionController.close();
+    await _advertisingController.close();
   }
 }

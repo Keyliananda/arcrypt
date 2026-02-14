@@ -315,12 +315,14 @@ class _ChatScreenState extends State<ChatScreen> {
   // Subscriptions
   StreamSubscription<Uint8List>? _inboundSub;
   StreamSubscription<bool>? _connectionSub;
+  StreamSubscription<bool>? _advertisingSub;
   StreamSubscription<DiscoveredPeripheral>? _discoverySub;
   StreamSubscription<Uint8List>? _transportMessageSub;
 
   @override
   void initState() {
     super.initState();
+    _logRelayConfig();
     _initBle();
   }
 
@@ -332,6 +334,7 @@ class _ChatScreenState extends State<ChatScreen> {
         // Peripheral role: Start GATT Server
         _gattServer = GattServer(logger: _logLine);
         await _gattServer!.start();
+        _isAdvertising = _gattServer!.isAdvertising;
 
         _connectionSub = _gattServer!.connectionState.listen((connected) {
           setState(() {
@@ -349,6 +352,15 @@ class _ChatScreenState extends State<ChatScreen> {
             _expectedPeerStaticPubkeyX25519 = null;
             _requireExpectedPeer = false;
           }
+        });
+        _advertisingSub = _gattServer!.advertisingState.listen((advertising) {
+          if (!mounted) {
+            _isAdvertising = advertising;
+            return;
+          }
+          setState(() {
+            _isAdvertising = advertising;
+          });
         });
 
         _logLine('GATT Server bereit');
@@ -836,6 +848,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _inboundSub?.cancel();
     _connectionSub?.cancel();
+    _advertisingSub?.cancel();
     _discoverySub?.cancel();
     _transportMessageSub?.cancel();
     _gattServer?.dispose();
@@ -901,6 +914,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final remoteStatusLabel = _relayRuntimeConfig.remoteStatusLabel;
     final trustLabel = _trustLabel(pairing);
     final statusError = _statusError;
+    final connectionLabel = _connectionStatusLabel();
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -923,11 +937,7 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _isConnected
-                      ? (_chatSession != null
-                            ? 'Verbunden (Secure)'
-                            : 'Verbunden (Pairing)')
-                      : 'Nicht verbunden',
+                  connectionLabel,
                   style: const TextStyle(fontSize: 12),
                 ),
               ),
@@ -940,7 +950,7 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               _buildStatusPill(
                 icon: remoteAvailable ? Icons.cloud_done : Icons.cloud_off,
-                text: remoteStatusLabel,
+                text: 'Relay: $remoteStatusLabel',
                 color: remoteAvailable
                     ? Colors.green.shade50
                     : Colors.orange.shade50,
@@ -985,6 +995,28 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  String _connectionStatusLabel() {
+    if (_isConnected) {
+      return _chatSession != null
+          ? 'Verbunden (Secure)'
+          : 'Verbunden (Pairing)';
+    }
+    if (widget.role == ChatRole.responder && _isAdvertising) {
+      return 'Nicht verbunden (Advertising aktiv)';
+    }
+    return 'Nicht verbunden';
+  }
+
+  void _logRelayConfig() {
+    final baseUri = _relayRuntimeConfig.baseUri;
+    final relayEndpoint = baseUri == null
+        ? '<nicht gesetzt>'
+        : '${baseUri.scheme}://${baseUri.host}${baseUri.hasPort ? ':${baseUri.port}' : ''}';
+    _logLine(
+      'Relay-Konfig: endpoint=$relayEndpoint, mailboxIds=${_relayRuntimeConfig.hasMailboxIds ? 'ok' : 'fehlen'}, wake=${_relayRuntimeConfig.isWakeConfigured ? 'ja' : 'nein'}',
     );
   }
 

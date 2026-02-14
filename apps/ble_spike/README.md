@@ -16,3 +16,20 @@ BLE spike app to validate BLE roles and platform limits for the MVP.
 ## Notes
 - `flutter_ble_peripheral` only advertises; Service/Char/Write/Notify are N/A.
 - For GATT testing, a native peripheral or another plugin is required.
+
+## Relay status in the Advertise screen
+- The `Relay: ...` pill is based on compile-time `--dart-define` values.
+- If `PRSM_RELAY_BASE_URL` (and mailbox IDs) are missing at build/run time,
+  the app shows `Remote nicht konfiguriert ...` even when BLE itself works.
+- BLE connectivity and Relay configuration are independent signals.
+
+Example:
+
+```bash
+flutter run \
+  --dart-define=PRSM_RELAY_BASE_URL=https://relay.example \
+  --dart-define=PRSM_RELAY_INBOUND_MAILBOX_ID=your-inbound-id \
+  --dart-define=PRSM_RELAY_OUTBOUND_MAILBOX_ID=your-outbound-id \
+  --dart-define=PRSM_RELAY_WAKE_HMAC_SECRET=optional-wake-secret \
+  --dart-define=PRSM_RELAY_PEER_WAKE_TOKEN=optional-peer-token
+```
