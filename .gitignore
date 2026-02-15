@@ -28,3 +28,7 @@ server/node_modules/
 server/data.sqlite
 server/secrets/
 server/secrets/*.p8
+
+# Local helper files
+HISTORY.md
+project_file_list.md

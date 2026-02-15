@@ -39,6 +39,8 @@ class GattServer implements TransportLink {
       StreamController.broadcast();
   final StreamController<bool> _advertisingController =
       StreamController.broadcast();
+  final StreamController<BluetoothLowEnergyState> _bleStateController =
+      StreamController.broadcast();
 
   /// Stream of inbound data from Central
   Stream<Uint8List> get inbound => _inboundController.stream;
@@ -49,6 +51,9 @@ class GattServer implements TransportLink {
   /// Stream of advertising state changes
   Stream<bool> get advertisingState => _advertisingController.stream;
 
+  /// Stream of BLE state changes (poweredOn/off/unauthorized/...)
+  Stream<BluetoothLowEnergyState> get bleState => _bleStateController.stream;
+
   /// Whether the server is running
   bool get isRunning => _isRunning;
 
@@ -57,6 +62,9 @@ class GattServer implements TransportLink {
 
   /// Whether a Central is connected
   bool get isConnected => _connectedCentral != null;
+
+  /// Current BLE state from peripheral manager
+  BluetoothLowEnergyState get currentBleState => _peripheral.state;
 
   // Subscriptions
   StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _stateSub;
@@ -77,6 +85,7 @@ class GattServer implements TransportLink {
     // Listen for state changes first
     _stateSub = _peripheral.stateChanged.listen((event) {
       _log('BLE State changed: ${event.state}');
+      _emitBleState(event.state);
       if (event.state == BluetoothLowEnergyState.poweredOn && !_isRunning) {
         // BLE just became available, try to setup service
         _trySetupService();
@@ -108,6 +117,7 @@ class GattServer implements TransportLink {
     // Check BLE state and setup if ready
     final state = _peripheral.state;
     _log('Current BLE state: $state');
+    _emitBleState(state);
 
     if (state == BluetoothLowEnergyState.poweredOn) {
       await _trySetupService();
@@ -278,6 +288,7 @@ class GattServer implements TransportLink {
   void _handleBleDisabled() {
     _log('BLE disabled, cleaning up...');
     _setAdvertising(false);
+    _isRunning = false;
     _connectedCentral = null;
     _connectionController.add(false);
   }
@@ -288,6 +299,10 @@ class GattServer implements TransportLink {
     }
     _isAdvertising = value;
     _advertisingController.add(value);
+  }
+
+  void _emitBleState(BluetoothLowEnergyState state) {
+    _bleStateController.add(state);
   }
 
   /// Stop the server and clean up
@@ -320,5 +335,6 @@ class GattServer implements TransportLink {
     await _inboundController.close();
     await _connectionController.close();
     await _advertisingController.close();
+    await _bleStateController.close();
   }
 }

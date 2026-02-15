@@ -56,6 +56,8 @@ class GattClient implements TransportLink {
       StreamController.broadcast();
   final StreamController<bool> _connectionController =
       StreamController.broadcast();
+  final StreamController<BluetoothLowEnergyState> _bleStateController =
+      StreamController.broadcast();
 
   /// Stream of inbound data from Peripheral
   Stream<Uint8List> get inbound => _inboundController.stream;
@@ -66,6 +68,9 @@ class GattClient implements TransportLink {
   /// Stream of connection state changes
   Stream<bool> get connectionState => _connectionController.stream;
 
+  /// Stream of BLE state changes (poweredOn/off/unauthorized/...)
+  Stream<BluetoothLowEnergyState> get bleState => _bleStateController.stream;
+
   /// Whether we're scanning
   bool get isScanning => _isScanning;
 
@@ -74,6 +79,9 @@ class GattClient implements TransportLink {
 
   /// The connected peripheral
   Peripheral? get connectedPeripheral => _connectedPeripheral;
+
+  /// Current BLE state from central manager
+  BluetoothLowEnergyState get currentBleState => _central.state;
 
   // Subscriptions
   StreamSubscription<BluetoothLowEnergyStateChangedEventArgs>? _stateSub;
@@ -92,6 +100,7 @@ class GattClient implements TransportLink {
 
     // Check BLE state
     final state = _central.state;
+    _bleStateController.add(state);
     if (state != BluetoothLowEnergyState.poweredOn) {
       _log('Bluetooth not powered on: $state');
       throw Exception('Bluetooth is not powered on');
@@ -100,6 +109,7 @@ class GattClient implements TransportLink {
     // Listen for state changes
     _stateSub = _central.stateChanged.listen((event) {
       _log('BLE State changed: ${event.state}');
+      _bleStateController.add(event.state);
       if (event.state != BluetoothLowEnergyState.poweredOn) {
         _handleBleDisabled();
       }
@@ -340,5 +350,6 @@ class GattClient implements TransportLink {
     await _inboundController.close();
     await _discoveredController.close();
     await _connectionController.close();
+    await _bleStateController.close();
   }
 }

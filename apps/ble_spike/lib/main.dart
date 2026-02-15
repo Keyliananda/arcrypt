@@ -7,9 +7,14 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'ble/ble.dart';
 import 'chat/chat.dart';
-import 'transport/transport.dart';
+import 'transport/relay_inbox.dart';
+import 'transport/relay_link.dart';
+import 'transport/relay_outbox.dart';
 import 'transport/relay_runtime_config.dart';
+import 'transport/transport.dart';
 import 'security/pairing_session.dart';
+
+const String kAppVersion = '0.701';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -182,6 +187,11 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                 'Ende-zu-Ende verschlüsselter BLE-Chat',
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
+              const SizedBox(height: 4),
+              Text(
+                'Version $kAppVersion',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
               const SizedBox(height: 32),
 
               // Status
@@ -204,7 +214,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                         color: isReady ? Colors.green : Colors.orange,
                       ),
                       const SizedBox(width: 8),
-                      Text(_status),
+                      Flexible(child: Text(_status)),
                     ],
                   ),
                 ),
@@ -296,6 +306,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Transport
   TransportEndpoint? _transport;
+  RelayMailboxHttpClient? _relayMailboxClient;
+  RelayWakeHttpClient? _relayWakeClient;
+  RelayLink? _relayLink;
+  RelayPollingLoop? _relayPollingLoop;
+  RelayInboxStore? _relayInboxStore;
+  RelayInboxQueue? _relayInboxQueue;
+  RelayOutboxStore? _relayOutboxStore;
+  RelayOutboxQueue? _relayOutboxQueue;
+  final List<Uint8List> _pendingTransportPackets = [];
+  bool _relayOutboxFlushInFlight = false;
 
   // Chat session
   ChatSession? _chatSession;
@@ -309,6 +329,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isConnected = false;
   bool _isScanning = false;
   bool _isAdvertising = false;
+  BluetoothLowEnergyState? _bleState;
   String? _statusError;
   List<DiscoveredPeripheral> _discoveredDevices = [];
 
@@ -316,6 +337,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<Uint8List>? _inboundSub;
   StreamSubscription<bool>? _connectionSub;
   StreamSubscription<bool>? _advertisingSub;
+  StreamSubscription<BluetoothLowEnergyState>? _bleStateSub;
   StreamSubscription<DiscoveredPeripheral>? _discoverySub;
   StreamSubscription<Uint8List>? _transportMessageSub;
 
@@ -335,6 +357,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _gattServer = GattServer(logger: _logLine);
         await _gattServer!.start();
         _isAdvertising = _gattServer!.isAdvertising;
+        _bleState = _gattServer!.currentBleState;
 
         _connectionSub = _gattServer!.connectionState.listen((connected) {
           setState(() {
@@ -344,13 +367,17 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           });
           if (connected) {
-            _setupTransport(_gattServer!);
+            _ensureTransport();
           } else {
-            _transport?.resetSession();
-            _pairing?.reset();
-            _chatSession = null;
-            _expectedPeerStaticPubkeyX25519 = null;
-            _requireExpectedPeer = false;
+            if (_relayLink == null) {
+              _transport?.resetSession();
+              _pairing?.reset();
+              _chatSession = null;
+              _expectedPeerStaticPubkeyX25519 = null;
+              _requireExpectedPeer = false;
+            } else {
+              _logLine('BLE getrennt; Relay bleibt aktiv');
+            }
           }
         });
         _advertisingSub = _gattServer!.advertisingState.listen((advertising) {
@@ -362,12 +389,22 @@ class _ChatScreenState extends State<ChatScreen> {
             _isAdvertising = advertising;
           });
         });
+        _bleStateSub = _gattServer!.bleState.listen((state) {
+          if (!mounted) {
+            _bleState = state;
+            return;
+          }
+          setState(() {
+            _bleState = state;
+          });
+        });
 
         _logLine('GATT Server bereit');
       } else {
         // Central role: Initialize GATT Client
         _gattClient = GattClient(logger: _logLine);
         await _gattClient!.initialize();
+        _bleState = _gattClient!.currentBleState;
 
         _connectionSub = _gattClient!.connectionState.listen((connected) {
           setState(() {
@@ -377,13 +414,17 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           });
           if (connected) {
-            _setupTransport(_gattClient!);
+            _ensureTransport();
           } else {
-            _transport?.resetSession();
-            _pairing?.reset();
-            _chatSession = null;
-            _expectedPeerStaticPubkeyX25519 = null;
-            _requireExpectedPeer = false;
+            if (_relayLink == null) {
+              _transport?.resetSession();
+              _pairing?.reset();
+              _chatSession = null;
+              _expectedPeerStaticPubkeyX25519 = null;
+              _requireExpectedPeer = false;
+            } else {
+              _logLine('BLE getrennt; Relay bleibt aktiv');
+            }
           }
         });
 
@@ -398,18 +439,33 @@ class _ChatScreenState extends State<ChatScreen> {
             }
           });
         });
+        _bleStateSub = _gattClient!.bleState.listen((state) {
+          if (!mounted) {
+            _bleState = state;
+            return;
+          }
+          setState(() {
+            _bleState = state;
+          });
+        });
 
         _logLine('GATT Client bereit');
       }
+      await _initRelay();
+      _ensureTransport();
     } catch (e) {
       _logLine('BLE Init Fehler: $e');
       _setStatusError('BLE Init Fehler');
     }
   }
 
-  void _setupTransport(TransportLink link) {
+  void _ensureTransport() {
+    if (_transport != null) {
+      return;
+    }
     _logLine('Richte Transport ein...');
 
+    final link = _buildHybridTransportLink();
     _transport = TransportEndpoint(
       name: widget.role.name,
       link: link,
@@ -421,17 +477,30 @@ class _ChatScreenState extends State<ChatScreen> {
       logger: _logLine,
     );
 
-    // Listen for incoming BLE data and feed to transport
+    _inboundSub?.cancel();
+    // Listen for incoming BLE data and feed to transport.
     if (widget.role == ChatRole.responder) {
       _inboundSub = _gattServer!.inbound.listen((bytes) {
-        _transport!.handlePacket(bytes);
+        _feedTransportPacket(bytes, source: 'BLE');
       });
     } else {
       _inboundSub = _gattClient!.inbound.listen((bytes) {
-        _transport!.handlePacket(bytes);
+        _feedTransportPacket(bytes, source: 'BLE');
       });
     }
 
+    if (_pendingTransportPackets.isNotEmpty) {
+      _logLine(
+        'Verarbeite ${_pendingTransportPackets.length} gepufferte Transportpakete...',
+      );
+      final pending = List<Uint8List>.from(_pendingTransportPackets);
+      _pendingTransportPackets.clear();
+      for (final packet in pending) {
+        _transport!.handlePacket(packet);
+      }
+    }
+
+    _transportMessageSub?.cancel();
     // Listen for assembled messages from transport
     _transportMessageSub = _transport!.messages.listen(_onTransportMessage);
 
@@ -458,6 +527,163 @@ class _ChatScreenState extends State<ChatScreen> {
       requireExpectedPeer: _requireExpectedPeer,
     );
     unawaited(_pairing!.startIfInitiator());
+    unawaited(_flushRelayOutbox(reason: 'transport-ready'));
+  }
+
+  TransportLink _buildHybridTransportLink() {
+    return _HybridTransportLink(
+      resolveBleLink: _resolveBleTransportLink,
+      preferBle: () => _isConnected,
+      relayOutbox: _relayOutboxQueue,
+      logger: _logLine,
+    );
+  }
+
+  TransportLink? _resolveBleTransportLink() {
+    if (widget.role == ChatRole.responder) {
+      return _gattServer;
+    }
+    return _gattClient;
+  }
+
+  Future<void> _initRelay() async {
+    if (!_relayRuntimeConfig.isRemoteAvailable) {
+      _logLine('Relay deaktiviert: ${_relayRuntimeConfig.remoteStatusLabel}');
+      return;
+    }
+    final baseUri = _relayRuntimeConfig.baseUri;
+    if (baseUri == null) {
+      _logLine('Relay deaktiviert: Base URL ungueltig');
+      return;
+    }
+    final mailboxInbound = _relayRuntimeConfig.inboundMailboxId.trim();
+    final mailboxOutbound = _relayRuntimeConfig.outboundMailboxId.trim();
+    if (mailboxInbound.isEmpty || mailboxOutbound.isEmpty) {
+      _logLine('Relay deaktiviert: Mailbox IDs fehlen');
+      return;
+    }
+
+    try {
+      final boxSuffix = widget.role.name;
+      _relayInboxStore = await HiveRelayInboxStore.open(
+        boxName: '${kRelayInboxBox}_$boxSuffix',
+      );
+      _relayOutboxStore = await HiveRelayOutboxStore.open(
+        boxName: '${kRelayOutboxBox}_$boxSuffix',
+      );
+      _relayInboxQueue = RelayInboxQueue(store: _relayInboxStore!);
+
+      _relayMailboxClient = RelayMailboxHttpClient(
+        config: RelayLinkConfig(baseUri: baseUri),
+        logger: _logLine,
+      );
+      final wakeSecret = _relayRuntimeConfig.wakeHmacSecret.trim();
+      if (wakeSecret.isNotEmpty) {
+        _relayWakeClient = RelayWakeHttpClient(
+          config: RelayWakeConfig(baseUri: baseUri, hmacSecret: wakeSecret),
+          logger: _logLine,
+        );
+      }
+      final peerWakeToken = _relayRuntimeConfig.peerWakeToken.trim();
+      _relayLink = RelayLink(
+        client: _relayMailboxClient!,
+        outboundMailboxId: mailboxOutbound,
+        inboundMailboxId: mailboxInbound,
+        inboxQueue: _relayInboxQueue,
+        wakeClient: _relayWakeClient,
+        peerWakeToken: peerWakeToken.isEmpty ? null : peerWakeToken,
+        onInboundCiphertext: (bytes) {
+          _feedTransportPacket(bytes, source: 'Relay');
+        },
+        onWakeResult: (result) {
+          _logLine('Relay Wake: ${result.status}');
+        },
+        onWakeError: (error, _) {
+          _logLine('Relay Wake Fehler: $error');
+        },
+      );
+      _relayOutboxQueue = RelayOutboxQueue(
+        store: _relayOutboxStore!,
+        sender: ({required ciphertext, required clientMsgId}) {
+          return _relayLink!.pushCiphertext(
+            ciphertext,
+            clientMsgId: clientMsgId,
+          );
+        },
+      );
+      _relayPollingLoop = RelayPollingLoop(
+        link: _relayLink!,
+        onPoll: (result) {
+          final pulledCount = result.pull.messages.length;
+          if (pulledCount > 0 || result.pull.hasMore) {
+            _logLine(
+              'Relay poll: pulled=$pulledCount hasMore=${result.pull.hasMore}',
+            );
+          }
+          unawaited(_flushRelayOutbox(reason: 'poll'));
+        },
+        onError: (error, _) {
+          _logLine('Relay poll Fehler: $error');
+        },
+        logger: _logLine,
+      );
+      _relayPollingLoop!.start();
+      _logLine(
+        'Relay aktiv: in=$mailboxInbound out=$mailboxOutbound base=${baseUri.host}',
+      );
+      unawaited(_flushRelayOutbox(reason: 'relay-init'));
+    } catch (e) {
+      _logLine('Relay Init Fehler: $e');
+      _setStatusError('Relay Initialisierung fehlgeschlagen');
+    }
+  }
+
+  void _feedTransportPacket(Uint8List bytes, {required String source}) {
+    final transport = _transport;
+    if (transport == null) {
+      _pendingTransportPackets.add(Uint8List.fromList(bytes));
+      _logLine('$source RX gepuffert (${_pendingTransportPackets.length})');
+      return;
+    }
+    transport.handlePacket(bytes);
+  }
+
+  Future<void> _flushRelayOutbox({required String reason}) async {
+    final outbox = _relayOutboxQueue;
+    if (outbox == null || _relayOutboxFlushInFlight) {
+      return;
+    }
+    _relayOutboxFlushInFlight = true;
+    try {
+      final result = await outbox.flushPending(limit: 20);
+      if (result.processed > 0) {
+        _logLine(
+          'Relay Outbox[$reason]: processed=${result.processed} sent=${result.sent} retry=${result.retryScheduled} failed=${result.failed}',
+        );
+      }
+    } catch (e) {
+      _logLine('Relay Outbox Flush Fehler[$reason]: $e');
+    } finally {
+      _relayOutboxFlushInFlight = false;
+    }
+  }
+
+  Future<void> _disposeRelay() async {
+    final loop = _relayPollingLoop;
+    _relayPollingLoop = null;
+    if (loop != null) {
+      await loop.stop();
+    }
+    _relayLink?.close(force: true);
+    _relayLink = null;
+    _relayMailboxClient = null;
+    _relayWakeClient = null;
+    await _relayInboxStore?.close();
+    _relayInboxStore = null;
+    await _relayOutboxStore?.close();
+    _relayOutboxStore = null;
+    _relayInboxQueue = null;
+    _relayOutboxQueue = null;
   }
 
   Future<void> _onTransportMessage(Uint8List data) async {
@@ -696,8 +922,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     // For peripheral, we can't force disconnect in MVP
 
-    await _inboundSub?.cancel();
-    await _transportMessageSub?.cancel();
     _transport?.resetSession();
     _pairing?.reset();
     _chatSession = null;
@@ -709,6 +933,9 @@ class _ChatScreenState extends State<ChatScreen> {
       _statusError = null;
     });
     _logLine('Getrennt');
+    if (_relayLink != null && _pairing != null) {
+      unawaited(_pairing!.startIfInitiator());
+    }
   }
 
   // Messaging
@@ -836,6 +1063,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _logLine(String message) {
     final stamp = DateTime.now().toIso8601String().substring(11, 19);
+    debugPrint('$stamp $message');
     setState(() {
       _log.insert(0, '$stamp $message');
       if (_log.length > 100) {
@@ -849,8 +1077,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _inboundSub?.cancel();
     _connectionSub?.cancel();
     _advertisingSub?.cancel();
+    _bleStateSub?.cancel();
     _discoverySub?.cancel();
     _transportMessageSub?.cancel();
+    unawaited(_disposeRelay());
     _gattServer?.dispose();
     _gattClient?.dispose();
     _messageController.dispose();
@@ -881,7 +1111,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
           // Main content
           Expanded(
-            child: _isConnected ? _buildChatView() : _buildConnectionView(),
+            child:
+                (_isConnected ||
+                    (_relayLink != null &&
+                        (_pairing != null || _chatSession != null)))
+                ? _buildChatView()
+                : _buildConnectionView(),
           ),
 
           // Log section
@@ -950,14 +1185,23 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               _buildStatusPill(
                 icon: remoteAvailable ? Icons.cloud_done : Icons.cloud_off,
-                text: 'Relay: $remoteStatusLabel',
+                text: remoteAvailable
+                    ? 'Relay aktiv'
+                    : 'Relay optional (nicht konfiguriert)',
                 color: remoteAvailable
                     ? Colors.green.shade50
-                    : Colors.orange.shade50,
+                    : Colors.blueGrey.shade50,
                 foreground: remoteAvailable
                     ? Colors.green.shade800
-                    : Colors.orange.shade900,
+                    : Colors.blueGrey.shade800,
               ),
+              if (!remoteAvailable)
+                _buildStatusPill(
+                  icon: Icons.info_outline,
+                  text: remoteStatusLabel,
+                  color: Colors.orange.shade50,
+                  foreground: Colors.orange.shade900,
+                ),
               _buildStatusPill(
                 icon: trustLabel.startsWith('trusted')
                     ? Icons.verified_user
@@ -999,13 +1243,43 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _connectionStatusLabel() {
+    final bleState = _bleState;
+    if (bleState != null && bleState != BluetoothLowEnergyState.poweredOn) {
+      if (bleState == BluetoothLowEnergyState.poweredOff) {
+        return 'Bluetooth aus';
+      }
+      if (bleState == BluetoothLowEnergyState.unauthorized) {
+        return 'Bluetooth nicht erlaubt';
+      }
+      return 'Bluetooth nicht bereit ($bleState)';
+    }
     if (_isConnected) {
       return _chatSession != null
           ? 'Verbunden (Secure)'
           : 'Verbunden (Pairing)';
     }
-    if (widget.role == ChatRole.responder && _isAdvertising) {
-      return 'Nicht verbunden (Advertising aktiv)';
+    if (widget.role == ChatRole.responder) {
+      if (_isAdvertising && _relayLink != null) {
+        return 'Bluetooth aktiv (Advertising) · Relay aktiv · kein Peer';
+      }
+      if (_isAdvertising) {
+        return 'Bluetooth aktiv (Advertising) · kein Peer verbunden';
+      }
+      if (_gattServer?.isRunning == true && _relayLink != null) {
+        return 'Bluetooth aktiv · Relay aktiv · nicht verbunden';
+      }
+      if (_gattServer?.isRunning == true) {
+        return 'Bluetooth aktiv · nicht verbunden';
+      }
+    }
+    if (_gattClient != null && _relayLink != null) {
+      return 'Bluetooth aktiv · Relay aktiv · nicht verbunden';
+    }
+    if (_gattClient != null) {
+      return 'Bluetooth aktiv · nicht verbunden';
+    }
+    if (_relayLink != null) {
+      return 'Relay aktiv · Bluetooth nicht verbunden';
     }
     return 'Nicht verbunden';
   }
@@ -1371,4 +1645,50 @@ class _ExpectedPeer {
   final String contactId;
   final String nickname;
   final Uint8List staticPubkey32;
+}
+
+class _HybridTransportLink implements TransportLink {
+  _HybridTransportLink({
+    required this.resolveBleLink,
+    required this.preferBle,
+    required this.relayOutbox,
+    required this.logger,
+  });
+
+  final TransportLink? Function() resolveBleLink;
+  final bool Function() preferBle;
+  final RelayOutboxQueue? relayOutbox;
+  final void Function(String message) logger;
+
+  @override
+  Future<void> send(Uint8List bytes) async {
+    final ble = resolveBleLink();
+    if (preferBle() && ble != null) {
+      try {
+        await ble.send(bytes);
+        return;
+      } catch (e) {
+        logger('HybridLink: BLE send fehlgeschlagen, fallback Relay: $e');
+      }
+    }
+
+    final outbox = relayOutbox;
+    if (outbox != null) {
+      final entry = await outbox.enqueue(ciphertext: bytes);
+      final flush = await outbox.flushPending(limit: 1);
+      if (flush.sent > 0 || flush.retryScheduled > 0) {
+        return;
+      }
+      throw StateError(
+        'Relay send fehlgeschlagen (clientMsgId=${entry.clientMsgId})',
+      );
+    }
+
+    if (ble != null) {
+      await ble.send(bytes);
+      return;
+    }
+
+    throw StateError('Kein aktiver BLE- oder Relay-Link verfügbar');
+  }
 }
