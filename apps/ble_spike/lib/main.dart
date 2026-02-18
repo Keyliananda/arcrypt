@@ -20,7 +20,7 @@ import 'transport/relay_runtime_config.dart';
 import 'transport/transport.dart';
 import 'security/pairing_session.dart';
 
-const String kAppVersion = '0.701';
+const String kAppVersion = '0.702';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

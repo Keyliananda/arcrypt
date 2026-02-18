@@ -51,3 +51,15 @@ Optional CI pre-check:
 ```bash
 apps/ble_spike/tool/check_release_relay_env.sh
 ```
+
+## Fast DEV install for both Android devices
+Use this to always install with relay defaults in debug:
+
+```bash
+apps/ble_spike/tool/install_dev_android_pair.sh
+```
+
+It does three things:
+- sets `adb reverse tcp:3000 tcp:3000` on both phones
+- installs the app on both devices
+- injects `PRSM_DEV_RELAY_*` with a deterministic mailbox pair (swapped per device)
