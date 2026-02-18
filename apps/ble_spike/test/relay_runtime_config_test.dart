@@ -86,4 +86,72 @@ void main() {
     expect(roundtrip.wakeHmacSecret, config.wakeHmacSecret);
     expect(roundtrip.peerWakeToken, config.peerWakeToken);
   });
+
+  test('debug override wins in non-release when valid', () {
+    const environmentConfig = RelayRuntimeConfig(
+      baseUrl: 'https://relay.environment.example',
+      inboundMailboxId: 'env-in',
+      outboundMailboxId: 'env-out',
+      wakeHmacSecret: '',
+      peerWakeToken: '',
+    );
+    const debugOverride = RelayRuntimeConfig(
+      baseUrl: 'https://relay.debug.example',
+      inboundMailboxId: 'debug-in',
+      outboundMailboxId: 'debug-out',
+      wakeHmacSecret: '',
+      peerWakeToken: '',
+    );
+
+    final selection = RelayRuntimeConfig.resolveBuildConfigForMode(
+      isReleaseBuild: false,
+      environmentConfig: environmentConfig,
+      debugOverrideConfig: debugOverride,
+    );
+
+    expect(selection.source, RelayBuildConfigSource.debugOverride);
+    expect(selection.config.baseUrl, 'https://relay.debug.example');
+  });
+
+  test('release mode ignores debug override', () {
+    const environmentConfig = RelayRuntimeConfig(
+      baseUrl: 'https://relay.environment.example',
+      inboundMailboxId: 'env-in',
+      outboundMailboxId: 'env-out',
+      wakeHmacSecret: '',
+      peerWakeToken: '',
+    );
+    const debugOverride = RelayRuntimeConfig(
+      baseUrl: 'https://relay.debug.example',
+      inboundMailboxId: 'debug-in',
+      outboundMailboxId: 'debug-out',
+      wakeHmacSecret: '',
+      peerWakeToken: '',
+    );
+
+    final selection = RelayRuntimeConfig.resolveBuildConfigForMode(
+      isReleaseBuild: true,
+      environmentConfig: environmentConfig,
+      debugOverrideConfig: debugOverride,
+    );
+
+    expect(selection.source, RelayBuildConfigSource.environment);
+    expect(selection.config.baseUrl, 'https://relay.environment.example');
+  });
+
+  test('release guard returns error when base URL is missing', () {
+    final error = RelayRuntimeConfig.releaseGuardError(
+      isReleaseBuild: true,
+      environmentConfig: RelayRuntimeConfig.empty,
+    );
+    expect(error, isNotNull);
+  });
+
+  test('release guard returns no error in non-release builds', () {
+    final error = RelayRuntimeConfig.releaseGuardError(
+      isReleaseBuild: false,
+      environmentConfig: RelayRuntimeConfig.empty,
+    );
+    expect(error, isNull);
+  });
 }

@@ -1,3 +1,12 @@
+enum RelayBuildConfigSource { environment, debugOverride }
+
+class RelayBuildConfigSelection {
+  const RelayBuildConfigSelection({required this.config, required this.source});
+
+  final RelayRuntimeConfig config;
+  final RelayBuildConfigSource source;
+}
+
 class RelayRuntimeConfig {
   const RelayRuntimeConfig({
     required this.baseUrl,
@@ -34,6 +43,85 @@ class RelayRuntimeConfig {
       defaultValue: '',
     ),
   );
+
+  static const RelayRuntimeConfig fromDebugEnvironment = RelayRuntimeConfig(
+    baseUrl: String.fromEnvironment(
+      'PRSM_DEV_RELAY_BASE_URL',
+      defaultValue: '',
+    ),
+    inboundMailboxId: String.fromEnvironment(
+      'PRSM_DEV_RELAY_INBOUND_MAILBOX_ID',
+      defaultValue: '',
+    ),
+    outboundMailboxId: String.fromEnvironment(
+      'PRSM_DEV_RELAY_OUTBOUND_MAILBOX_ID',
+      defaultValue: '',
+    ),
+    wakeHmacSecret: String.fromEnvironment(
+      'PRSM_DEV_RELAY_WAKE_HMAC_SECRET',
+      defaultValue: '',
+    ),
+    peerWakeToken: String.fromEnvironment(
+      'PRSM_DEV_RELAY_PEER_WAKE_TOKEN',
+      defaultValue: '',
+    ),
+  );
+
+  static const bool isReleaseBuild = bool.fromEnvironment('dart.vm.product');
+
+  static RelayBuildConfigSelection resolveBuildConfigForMode({
+    required bool isReleaseBuild,
+    required RelayRuntimeConfig environmentConfig,
+    required RelayRuntimeConfig debugOverrideConfig,
+  }) {
+    if (!isReleaseBuild && debugOverrideConfig.isRemoteAvailable) {
+      return RelayBuildConfigSelection(
+        config: debugOverrideConfig,
+        source: RelayBuildConfigSource.debugOverride,
+      );
+    }
+    return RelayBuildConfigSelection(
+      config: environmentConfig,
+      source: RelayBuildConfigSource.environment,
+    );
+  }
+
+  static RelayBuildConfigSelection get buildConfigSelection {
+    return resolveBuildConfigForMode(
+      isReleaseBuild: isReleaseBuild,
+      environmentConfig: fromEnvironment,
+      debugOverrideConfig: fromDebugEnvironment,
+    );
+  }
+
+  static RelayRuntimeConfig get fromBuildDefaults =>
+      buildConfigSelection.config;
+
+  static String? releaseGuardError({
+    required bool isReleaseBuild,
+    required RelayRuntimeConfig environmentConfig,
+  }) {
+    if (!isReleaseBuild) {
+      return null;
+    }
+    if (environmentConfig.baseUrl.trim().isEmpty) {
+      return 'Release-Build ohne PRSM_RELAY_BASE_URL ist nicht erlaubt.';
+    }
+    if (environmentConfig.baseUri == null) {
+      return 'Release-Build mit ungueltiger PRSM_RELAY_BASE_URL ist nicht erlaubt.';
+    }
+    return null;
+  }
+
+  static void enforceReleaseBuildRequirements() {
+    final error = releaseGuardError(
+      isReleaseBuild: isReleaseBuild,
+      environmentConfig: fromEnvironment,
+    );
+    if (error != null) {
+      throw StateError(error);
+    }
+  }
 
   final String baseUrl;
   final String inboundMailboxId;

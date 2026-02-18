@@ -28,6 +28,7 @@ void main() {
     expect(result.source, RelayConfigSource.runtime);
     expect(result.config.baseUrl, 'https://relay.runtime.example');
     expect(result.runtimePresentButInvalid, isFalse);
+    expect(result.healthReason, RelayConfigHealthReason.okRuntime);
   });
 
   test('falls back to build config when runtime config is invalid', () {
@@ -47,6 +48,10 @@ void main() {
     expect(result.source, RelayConfigSource.environment);
     expect(result.config.baseUrl, 'https://relay.env.example');
     expect(result.runtimePresentButInvalid, isTrue);
+    expect(
+      result.healthReason,
+      RelayConfigHealthReason.runtimeInvalidFallbackEnvironment,
+    );
   });
 
   test('uses environment config when runtime config is absent', () {
@@ -58,5 +63,37 @@ void main() {
     expect(result.source, RelayConfigSource.environment);
     expect(result.config.baseUrl, 'https://relay.env.example');
     expect(result.runtimePresentButInvalid, isFalse);
+    expect(result.healthReason, RelayConfigHealthReason.okEnvironment);
+  });
+
+  test('returns environment invalid reason when only invalid env exists', () {
+    const invalidEnvironment = RelayRuntimeConfig(
+      baseUrl: 'https://relay.env.example',
+      inboundMailboxId: '',
+      outboundMailboxId: '',
+      wakeHmacSecret: '',
+      peerWakeToken: '',
+    );
+
+    final result = resolveRelayRuntimeConfig(
+      environmentConfig: invalidEnvironment,
+      runtimeConfig: null,
+    );
+
+    expect(result.source, RelayConfigSource.environment);
+    expect(result.healthReason, RelayConfigHealthReason.environmentInvalid);
+  });
+
+  test('returns missing reason when runtime and env are empty', () {
+    final result = resolveRelayRuntimeConfig(
+      environmentConfig: RelayRuntimeConfig.empty,
+      runtimeConfig: null,
+    );
+
+    expect(result.source, RelayConfigSource.environment);
+    expect(
+      result.healthReason,
+      RelayConfigHealthReason.missingRuntimeAndEnvironment,
+    );
   });
 }

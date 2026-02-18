@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'ble/ble.dart';
 import 'chat/chat.dart';
 import 'relay_config_screen.dart';
+import 'transport/relay_config_bootstrapper.dart';
 import 'transport/relay_config_resolver.dart';
 import 'transport/relay_config_store.dart';
 import 'transport/relay_inbox.dart';
@@ -23,6 +24,7 @@ const String kAppVersion = '0.701';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  RelayRuntimeConfig.enforceReleaseBuildRequirements();
   await ChatStorage.instance.init();
   await ChatStorage.instance.ensureAppMeta();
   runApp(const PrsmChatApp());
@@ -222,8 +224,8 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   Future<void> _openRelayConfigScreen() async {
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => const RelayConfigScreen(
-          environmentConfig: RelayRuntimeConfig.fromEnvironment,
+        builder: (_) => RelayConfigScreen(
+          environmentConfig: RelayRuntimeConfig.fromBuildDefaults,
         ),
       ),
     );
@@ -424,8 +426,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<String> _log = [];
   final List<ChatMessage> _messages = [];
   final RelayConfigStore _relayConfigStore = const RelayConfigStore();
-  RelayRuntimeConfig _relayRuntimeConfig = RelayRuntimeConfig.fromEnvironment;
+  RelayRuntimeConfig _relayRuntimeConfig = RelayRuntimeConfig.fromBuildDefaults;
   RelayConfigSource _relayConfigSource = RelayConfigSource.environment;
+  RelayConfigHealthReason _relayConfigHealthReason =
+      RelayConfigHealthReason.okEnvironment;
 
   // BLE components
   GattServer? _gattServer;
@@ -698,18 +702,36 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _refreshResolvedRelayConfig() async {
-    final runtimeConfig = await _relayConfigStore.load();
+    final environmentConfig = RelayRuntimeConfig.fromBuildDefaults;
+    final bootstrapper = RelayConfigBootstrapper(
+      loadRuntimeConfig: _relayConfigStore.load,
+      saveRuntimeConfig: _relayConfigStore.save,
+    );
+    final bootstrapOutcome = await bootstrapper.ensureRuntimeConfig(
+      environmentConfig: environmentConfig,
+    );
+    if (bootstrapOutcome.status ==
+        RelayBootstrapStatus.bootstrappedFromEnvironment) {
+      _logLine('Relay Bootstrap: Runtime-Konfig aus Build-Defaults angelegt');
+    } else if (bootstrapOutcome.status ==
+        RelayBootstrapStatus.failedToPersist) {
+      _logLine(
+        'Relay Bootstrap Fehler: Runtime-Konfig konnte nicht gespeichert werden',
+      );
+    }
+
     final resolution = resolveRelayRuntimeConfig(
-      environmentConfig: RelayRuntimeConfig.fromEnvironment,
-      runtimeConfig: runtimeConfig,
+      environmentConfig: environmentConfig,
+      runtimeConfig: bootstrapOutcome.runtimeConfig,
     );
 
     _relayRuntimeConfig = resolution.config;
     _relayConfigSource = resolution.source;
+    _relayConfigHealthReason = resolution.healthReason;
 
-    if (resolution.runtimePresentButInvalid) {
+    if (resolution.healthReason.isIssue) {
       _logLine(
-        'Relay Runtime-Konfig unvollstaendig, fallback auf Build-Defines',
+        'Relay-Konfig-Hinweis: ${resolution.healthReason.label} (${resolution.healthReason.code})',
       );
     }
     if (mounted) {
@@ -1322,6 +1344,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final silentDowngradeBlocked = _isSilentDowngradeBlocked(pairing);
     final remoteAvailable = _relayRuntimeConfig.isRemoteAvailable;
     final remoteStatusLabel = _relayRuntimeConfig.remoteStatusLabel;
+    final relayHealthReason = _relayConfigHealthReason;
     final trustLabel = _trustLabel(pairing);
     final statusError = _statusError;
     final connectionLabel = _connectionStatusLabel();
@@ -1376,6 +1399,13 @@ class _ChatScreenState extends State<ChatScreen> {
                   text: remoteStatusLabel,
                   color: Colors.orange.shade50,
                   foreground: Colors.orange.shade900,
+                ),
+              if (relayHealthReason.isIssue)
+                _buildStatusPill(
+                  icon: Icons.bug_report_outlined,
+                  text: 'Relay-Health: ${relayHealthReason.code}',
+                  color: Colors.red.shade50,
+                  foreground: Colors.red.shade900,
                 ),
               _buildStatusPill(
                 icon: trustLabel.startsWith('trusted')
@@ -1467,8 +1497,13 @@ class _ChatScreenState extends State<ChatScreen> {
     final sourceLabel = _relayConfigSource == RelayConfigSource.runtime
         ? 'runtime'
         : 'build';
+    final buildSelection = RelayRuntimeConfig.buildConfigSelection;
+    final buildSourceLabel =
+        buildSelection.source == RelayBuildConfigSource.debugOverride
+        ? 'debug-override'
+        : 'environment';
     _logLine(
-      'Relay-Konfig[$sourceLabel]: endpoint=$relayEndpoint, mailboxIds=${_relayRuntimeConfig.hasMailboxIds ? 'ok' : 'fehlen'}, wake=${_relayRuntimeConfig.isWakeConfigured ? 'ja' : 'nein'}',
+      'Relay-Konfig[$sourceLabel]: endpoint=$relayEndpoint, mailboxIds=${_relayRuntimeConfig.hasMailboxIds ? 'ok' : 'fehlen'}, wake=${_relayRuntimeConfig.isWakeConfigured ? 'ja' : 'nein'}, health=${_relayConfigHealthReason.code}, buildSource=$buildSourceLabel',
     );
   }
 

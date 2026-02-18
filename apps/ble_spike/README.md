@@ -27,7 +27,8 @@ BLE spike app to validate BLE roles and platform limits for the MVP.
 - You can configure Relay at runtime via `Relay konfigurieren` on the start screen.
 - Runtime config is stored securely on-device and has priority over build defines.
 - Priority order: `stored runtime config` -> `--dart-define` fallback.
-- This prevents accidental "Relay off" installs when a run happens without defines.
+- On first launch (or after reinstall), valid build defaults are bootstrapped into
+  secure runtime storage automatically.
 
 Example:
 
@@ -38,4 +39,15 @@ flutter run \
   --dart-define=PRSM_RELAY_OUTBOUND_MAILBOX_ID=your-outbound-id \
   --dart-define=PRSM_RELAY_WAKE_HMAC_SECRET=optional-wake-secret \
   --dart-define=PRSM_RELAY_PEER_WAKE_TOKEN=optional-peer-token
+```
+
+## Release guard and debug shortcut
+- Release startup fails hard if `PRSM_RELAY_BASE_URL` is missing or invalid.
+- Debug/Profile builds can use local overrides via `PRSM_DEV_RELAY_*`.
+- `PRSM_DEV_RELAY_*` is ignored in Release builds.
+
+Optional CI pre-check:
+
+```bash
+apps/ble_spike/tool/check_release_relay_env.sh
 ```
