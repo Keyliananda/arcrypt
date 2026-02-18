@@ -69,4 +69,21 @@ void main() {
       expect(config.remoteStatusLabel, 'Remote verfuegbar (Wake bereit)');
     },
   );
+
+  test('json serialization roundtrip preserves values', () {
+    const config = RelayRuntimeConfig(
+      baseUrl: 'https://relay.example',
+      inboundMailboxId: 'inbound',
+      outboundMailboxId: 'outbound',
+      wakeHmacSecret: 'wake-secret',
+      peerWakeToken: 'peer-token',
+    );
+
+    final roundtrip = RelayRuntimeConfig.fromJson(config.toJson());
+    expect(roundtrip.baseUrl, config.baseUrl);
+    expect(roundtrip.inboundMailboxId, config.inboundMailboxId);
+    expect(roundtrip.outboundMailboxId, config.outboundMailboxId);
+    expect(roundtrip.wakeHmacSecret, config.wakeHmacSecret);
+    expect(roundtrip.peerWakeToken, config.peerWakeToken);
+  });
 }

@@ -7,6 +7,14 @@ class RelayRuntimeConfig {
     required this.peerWakeToken,
   });
 
+  static const RelayRuntimeConfig empty = RelayRuntimeConfig(
+    baseUrl: '',
+    inboundMailboxId: '',
+    outboundMailboxId: '',
+    wakeHmacSecret: '',
+    peerWakeToken: '',
+  );
+
   static const RelayRuntimeConfig fromEnvironment = RelayRuntimeConfig(
     baseUrl: String.fromEnvironment('PRSM_RELAY_BASE_URL', defaultValue: ''),
     inboundMailboxId: String.fromEnvironment(
@@ -33,6 +41,16 @@ class RelayRuntimeConfig {
   final String wakeHmacSecret;
   final String peerWakeToken;
 
+  factory RelayRuntimeConfig.fromJson(Map<String, dynamic> json) {
+    return RelayRuntimeConfig(
+      baseUrl: (json['baseUrl'] as String?) ?? '',
+      inboundMailboxId: (json['inboundMailboxId'] as String?) ?? '',
+      outboundMailboxId: (json['outboundMailboxId'] as String?) ?? '',
+      wakeHmacSecret: (json['wakeHmacSecret'] as String?) ?? '',
+      peerWakeToken: (json['peerWakeToken'] as String?) ?? '',
+    );
+  }
+
   Uri? get baseUri {
     final trimmed = baseUrl.trim();
     if (trimmed.isEmpty) {
@@ -48,6 +66,14 @@ class RelayRuntimeConfig {
   bool get hasMailboxIds {
     return inboundMailboxId.trim().isNotEmpty &&
         outboundMailboxId.trim().isNotEmpty;
+  }
+
+  bool get hasAnyValue {
+    return baseUrl.trim().isNotEmpty ||
+        inboundMailboxId.trim().isNotEmpty ||
+        outboundMailboxId.trim().isNotEmpty ||
+        wakeHmacSecret.trim().isNotEmpty ||
+        peerWakeToken.trim().isNotEmpty;
   }
 
   bool get isRemoteAvailable => baseUri != null && hasMailboxIds;
@@ -68,5 +94,15 @@ class RelayRuntimeConfig {
       return 'Remote nicht konfiguriert (Relay URL ungueltig)';
     }
     return 'Remote nicht konfiguriert (Mailbox IDs fehlen)';
+  }
+
+  Map<String, String> toJson() {
+    return {
+      'baseUrl': baseUrl,
+      'inboundMailboxId': inboundMailboxId,
+      'outboundMailboxId': outboundMailboxId,
+      'wakeHmacSecret': wakeHmacSecret,
+      'peerWakeToken': peerWakeToken,
+    };
   }
 }

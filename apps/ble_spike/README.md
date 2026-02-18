@@ -23,6 +23,12 @@ BLE spike app to validate BLE roles and platform limits for the MVP.
   the app shows `Remote nicht konfiguriert ...` even when BLE itself works.
 - BLE connectivity and Relay configuration are independent signals.
 
+## Stable Relay configuration (recommended)
+- You can configure Relay at runtime via `Relay konfigurieren` on the start screen.
+- Runtime config is stored securely on-device and has priority over build defines.
+- Priority order: `stored runtime config` -> `--dart-define` fallback.
+- This prevents accidental "Relay off" installs when a run happens without defines.
+
 Example:
 
 ```bash
