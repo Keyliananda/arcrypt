@@ -1,12 +1,17 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:bluetooth_low_energy/bluetooth_low_energy.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'ble/ble.dart';
 import 'chat/chat.dart';
+import 'relay_config_screen.dart';
+import 'transport/relay_config_resolver.dart';
+import 'transport/relay_config_store.dart';
 import 'transport/relay_inbox.dart';
 import 'transport/relay_link.dart';
 import 'transport/relay_outbox.dart';
@@ -49,8 +54,13 @@ class RoleSelectionScreen extends StatefulWidget {
 }
 
 class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
+  static const MethodChannel _systemSettingsChannel = MethodChannel(
+    'com.arcrypt.bleSpike/system_settings',
+  );
+
   String _status = '';
   bool _checking = false;
+  bool _locationServicesEnabled = true;
 
   // Keep a single instance of CentralManager
   CentralManager? _centralManager;
@@ -139,10 +149,30 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     if (!allGranted) {
       setState(() {
         _checking = false;
+        _locationServicesEnabled = true;
         _status =
             'Bluetooth-Berechtigungen fehlen.\nBitte in den Einstellungen erlauben.';
       });
       return;
+    }
+
+    if (Platform.isAndroid) {
+      final locationEnabled = await _isLocationEnabled();
+      if (!locationEnabled) {
+        setState(() {
+          _checking = false;
+          _locationServicesEnabled = false;
+          _status =
+              'Standortdienst ist aus.\nBitte in den Systemeinstellungen einschalten.';
+        });
+        return;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _locationServicesEnabled = true;
+      });
     }
 
     // Check current BLE state
@@ -159,6 +189,48 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
     }
   }
 
+  Future<bool> _isLocationEnabled() async {
+    try {
+      final enabled = await _systemSettingsChannel.invokeMethod<bool>(
+        'isLocationEnabled',
+      );
+      return enabled ?? true;
+    } catch (_) {
+      // Do not block startup if native query fails on this platform.
+      return true;
+    }
+  }
+
+  Future<void> _openLocationSettings() async {
+    if (!Platform.isAndroid) {
+      await openAppSettings();
+      return;
+    }
+
+    try {
+      final opened = await _systemSettingsChannel.invokeMethod<bool>(
+        'openLocationSettings',
+      );
+      if (opened != true) {
+        await openAppSettings();
+      }
+    } catch (_) {
+      await openAppSettings();
+    }
+  }
+
+  Future<void> _openRelayConfigScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const RelayConfigScreen(
+          environmentConfig: RelayRuntimeConfig.fromEnvironment,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _checkPermissions();
+  }
+
   void _selectRole(ChatRole role) {
     Navigator.of(
       context,
@@ -168,115 +240,169 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
   @override
   Widget build(BuildContext context) {
     final isReady = _status == 'Bereit';
+    final hasPermissionIssue = _status.contains('Berechtigungen fehlen');
+    final hasLocationIssue = !_locationServicesEnabled;
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Icon(Icons.bluetooth, size: 80, color: Colors.teal),
-              const SizedBox(height: 24),
-              const Text(
-                'PRSM Chat',
-                style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Ende-zu-Ende verschlüsselter BLE-Chat',
-                style: TextStyle(fontSize: 14, color: Colors.grey),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Version $kAppVersion',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 32),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final isCompact = constraints.maxHeight < 780;
+            final pagePadding = isCompact ? 20.0 : 32.0;
+            final buttonPadding = isCompact
+                ? const EdgeInsets.symmetric(vertical: 14, horizontal: 14)
+                : const EdgeInsets.all(20);
+            final topGap = isCompact ? 8.0 : 0.0;
 
-              // Status
-              if (_checking)
-                const CircularProgressIndicator()
-              else
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: isReady
-                        ? Colors.green.shade50
-                        : Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+            return SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Padding(
+                  padding: EdgeInsets.all(pagePadding),
+                  child: Column(
+                    mainAxisAlignment: isCompact
+                        ? MainAxisAlignment.start
+                        : MainAxisAlignment.center,
                     children: [
+                      SizedBox(height: topGap),
                       Icon(
-                        isReady ? Icons.check_circle : Icons.warning,
-                        color: isReady ? Colors.green : Colors.orange,
+                        Icons.bluetooth,
+                        size: isCompact ? 64 : 80,
+                        color: Colors.teal,
                       ),
-                      const SizedBox(width: 8),
-                      Flexible(child: Text(_status)),
+                      SizedBox(height: isCompact ? 16 : 24),
+                      Text(
+                        'PRSM Chat',
+                        style: TextStyle(
+                          fontSize: isCompact ? 28 : 32,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Ende-zu-Ende verschlüsselter BLE-Chat',
+                        style: TextStyle(fontSize: 14, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Version $kAppVersion',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      SizedBox(height: isCompact ? 20 : 32),
+                      TextButton.icon(
+                        onPressed: _openRelayConfigScreen,
+                        icon: const Icon(Icons.cloud_outlined),
+                        label: const Text('Relay konfigurieren'),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // Status
+                      if (_checking)
+                        const CircularProgressIndicator()
+                      else
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: isReady
+                                ? Colors.green.shade50
+                                : Colors.orange.shade50,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isReady ? Icons.check_circle : Icons.warning,
+                                color: isReady ? Colors.green : Colors.orange,
+                              ),
+                              const SizedBox(width: 8),
+                              Flexible(child: Text(_status)),
+                            ],
+                          ),
+                        ),
+
+                      SizedBox(height: isCompact ? 28 : 48),
+
+                      // Role selection
+                      if (isReady) ...[
+                        const Text(
+                          'Wähle deine Rolle:',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Peripheral button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _selectRole(ChatRole.responder),
+                            icon: const Icon(Icons.broadcast_on_personal),
+                            label: const Text('Peripheral (Sichtbar machen)'),
+                            style: ElevatedButton.styleFrom(
+                              padding: buttonPadding,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Werde sichtbar und warte auf Verbindungen',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+
+                        SizedBox(height: isCompact ? 16 : 24),
+
+                        // Central button
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () => _selectRole(ChatRole.initiator),
+                            icon: const Icon(Icons.search),
+                            label: const Text('Central (Suchen & Verbinden)'),
+                            style: OutlinedButton.styleFrom(
+                              padding: buttonPadding,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Suche nach sichtbaren Geräten und verbinde dich',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ],
+
+                      if (!isReady && !_checking) ...[
+                        const SizedBox(height: 24),
+                        if (hasLocationIssue)
+                          ElevatedButton.icon(
+                            onPressed: _openLocationSettings,
+                            icon: const Icon(Icons.location_on),
+                            label: const Text('Standortdienste öffnen'),
+                          ),
+                        if (hasLocationIssue) const SizedBox(height: 12),
+                        if (hasPermissionIssue)
+                          OutlinedButton.icon(
+                            onPressed: openAppSettings,
+                            icon: const Icon(Icons.settings),
+                            label: const Text('App-Einstellungen öffnen'),
+                          ),
+                        if (hasPermissionIssue) const SizedBox(height: 12),
+                        ElevatedButton(
+                          onPressed: _checkPermissions,
+                          child: const Text('Erneut prüfen'),
+                        ),
+                      ],
                     ],
                   ),
                 ),
-
-              const SizedBox(height: 48),
-
-              // Role selection
-              if (isReady) ...[
-                const Text(
-                  'Wähle deine Rolle:',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                ),
-                const SizedBox(height: 16),
-
-                // Peripheral button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _selectRole(ChatRole.responder),
-                    icon: const Icon(Icons.broadcast_on_personal),
-                    label: const Text('Peripheral (Sichtbar machen)'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.all(20),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Werde sichtbar und warte auf Verbindungen',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Central button
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () => _selectRole(ChatRole.initiator),
-                    icon: const Icon(Icons.search),
-                    label: const Text('Central (Suchen & Verbinden)'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.all(20),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Suche nach sichtbaren Geräten und verbinde dich',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-
-              if (!isReady && !_checking) ...[
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _checkPermissions,
-                  child: const Text('Erneut prüfen'),
-                ),
-              ],
-            ],
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -297,8 +423,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final List<String> _log = [];
   final List<ChatMessage> _messages = [];
-  final RelayRuntimeConfig _relayRuntimeConfig =
-      RelayRuntimeConfig.fromEnvironment;
+  final RelayConfigStore _relayConfigStore = const RelayConfigStore();
+  RelayRuntimeConfig _relayRuntimeConfig = RelayRuntimeConfig.fromEnvironment;
+  RelayConfigSource _relayConfigSource = RelayConfigSource.environment;
 
   // BLE components
   GattServer? _gattServer;
@@ -344,7 +471,6 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    _logRelayConfig();
     _initBle();
   }
 
@@ -368,6 +494,7 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           if (connected) {
             _ensureTransport();
+            _startPairingIfPossible(reason: 'ble-connected');
           } else {
             if (_relayLink == null) {
               _transport?.resetSession();
@@ -415,6 +542,7 @@ class _ChatScreenState extends State<ChatScreen> {
           });
           if (connected) {
             _ensureTransport();
+            _startPairingIfPossible(reason: 'ble-connected');
           } else {
             if (_relayLink == null) {
               _transport?.resetSession();
@@ -526,8 +654,31 @@ class _ChatScreenState extends State<ChatScreen> {
       expectedPeerStaticPubkeyX25519: _expectedPeerStaticPubkeyX25519,
       requireExpectedPeer: _requireExpectedPeer,
     );
-    unawaited(_pairing!.startIfInitiator());
+    _startPairingIfPossible(reason: 'transport-ready');
     unawaited(_flushRelayOutbox(reason: 'transport-ready'));
+  }
+
+  bool _hasActiveTransportPathForInitiator() {
+    return _isConnected || _relayOutboxQueue != null;
+  }
+
+  void _startPairingIfPossible({required String reason}) {
+    final pairing = _pairing;
+    if (pairing == null) {
+      return;
+    }
+    if (pairing.stage != PairingStage.idle) {
+      return;
+    }
+    if (widget.role != ChatRole.initiator) {
+      return;
+    }
+    if (!_hasActiveTransportPathForInitiator()) {
+      _logLine('Pairing wartet auf aktiven Link ($reason)');
+      return;
+    }
+    _logLine('Starte Pairing ($reason)...');
+    unawaited(pairing.startIfInitiator());
   }
 
   TransportLink _buildHybridTransportLink() {
@@ -546,7 +697,30 @@ class _ChatScreenState extends State<ChatScreen> {
     return _gattClient;
   }
 
+  Future<void> _refreshResolvedRelayConfig() async {
+    final runtimeConfig = await _relayConfigStore.load();
+    final resolution = resolveRelayRuntimeConfig(
+      environmentConfig: RelayRuntimeConfig.fromEnvironment,
+      runtimeConfig: runtimeConfig,
+    );
+
+    _relayRuntimeConfig = resolution.config;
+    _relayConfigSource = resolution.source;
+
+    if (resolution.runtimePresentButInvalid) {
+      _logLine(
+        'Relay Runtime-Konfig unvollstaendig, fallback auf Build-Defines',
+      );
+    }
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _initRelay() async {
+    await _refreshResolvedRelayConfig();
+    _logRelayConfig();
+
     if (!_relayRuntimeConfig.isRemoteAvailable) {
       _logLine('Relay deaktiviert: ${_relayRuntimeConfig.remoteStatusLabel}');
       return;
@@ -631,6 +805,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _logLine(
         'Relay aktiv: in=$mailboxInbound out=$mailboxOutbound base=${baseUri.host}',
       );
+      _startPairingIfPossible(reason: 'relay-ready');
       unawaited(_flushRelayOutbox(reason: 'relay-init'));
     } catch (e) {
       _logLine('Relay Init Fehler: $e');
@@ -1289,8 +1464,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final relayEndpoint = baseUri == null
         ? '<nicht gesetzt>'
         : '${baseUri.scheme}://${baseUri.host}${baseUri.hasPort ? ':${baseUri.port}' : ''}';
+    final sourceLabel = _relayConfigSource == RelayConfigSource.runtime
+        ? 'runtime'
+        : 'build';
     _logLine(
-      'Relay-Konfig: endpoint=$relayEndpoint, mailboxIds=${_relayRuntimeConfig.hasMailboxIds ? 'ok' : 'fehlen'}, wake=${_relayRuntimeConfig.isWakeConfigured ? 'ja' : 'nein'}',
+      'Relay-Konfig[$sourceLabel]: endpoint=$relayEndpoint, mailboxIds=${_relayRuntimeConfig.hasMailboxIds ? 'ok' : 'fehlen'}, wake=${_relayRuntimeConfig.isWakeConfigured ? 'ja' : 'nein'}',
     );
   }
 
@@ -1663,11 +1841,13 @@ class _HybridTransportLink implements TransportLink {
   @override
   Future<void> send(Uint8List bytes) async {
     final ble = resolveBleLink();
+    Object? bleSendError;
     if (preferBle() && ble != null) {
       try {
         await ble.send(bytes);
         return;
       } catch (e) {
+        bleSendError = e;
         logger('HybridLink: BLE send fehlgeschlagen, fallback Relay: $e');
       }
     }
@@ -1684,9 +1864,8 @@ class _HybridTransportLink implements TransportLink {
       );
     }
 
-    if (ble != null) {
-      await ble.send(bytes);
-      return;
+    if (bleSendError != null) {
+      throw StateError('BLE send fehlgeschlagen und Relay nicht verfuegbar');
     }
 
     throw StateError('Kein aktiver BLE- oder Relay-Link verfügbar');
