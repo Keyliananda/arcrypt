@@ -504,4 +504,63 @@ void main() {
     );
     expect(b.stage, PairingStage.established);
   });
+
+  test('drops further security frames after failed stage', () async {
+    final dh = X25519();
+    final aStatic = await dh.newKeyPair();
+    final store = _FakePairingStorage(aStatic);
+
+    var updates = 0;
+    final session = PairingSession(
+      role: ChatRole.initiator,
+      storage: store,
+      send: (_) async {},
+      onUpdate: () {
+        updates += 1;
+      },
+    );
+
+    await session.startIfInitiator();
+    final firstConsumed = await session.handleIncoming(
+      Uint8List.fromList([kSecMagic, kSecMsgHs2, 1, 2, 3]),
+    );
+    expect(firstConsumed, isTrue);
+    expect(session.stage, PairingStage.failed);
+    final firstError = session.error;
+    expect(firstError, contains('security message handling failed'));
+    final updatesAfterFail = updates;
+    expect(updatesAfterFail, greaterThanOrEqualTo(2));
+
+    final secondConsumed = await session.handleIncoming(
+      Uint8List.fromList([kSecMagic, kSecMsgHs3, 9, 8, 7]),
+    );
+    expect(secondConsumed, isTrue);
+    expect(session.stage, PairingStage.failed);
+    expect(session.error, firstError);
+    expect(updates, updatesAfterFail);
+  });
+
+  test('responder ignores stale non-hs1 security frames while idle', () async {
+    final dh = X25519();
+    final responderStatic = await dh.newKeyPair();
+    final store = _FakePairingStorage(responderStatic);
+
+    var updates = 0;
+    final responder = PairingSession(
+      role: ChatRole.responder,
+      storage: store,
+      send: (_) async {},
+      onUpdate: () {
+        updates += 1;
+      },
+    );
+
+    final consumed = await responder.handleIncoming(
+      Uint8List.fromList([kSecMagic, kSecMsgHs3, 1, 2, 3]),
+    );
+    expect(consumed, isTrue);
+    expect(responder.stage, PairingStage.idle);
+    expect(responder.error, isNull);
+    expect(updates, 0);
+  });
 }

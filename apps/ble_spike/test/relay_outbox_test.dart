@@ -171,6 +171,129 @@ void main() {
     await store.close();
     await Hive.deleteBoxFromDisk(boxName);
   });
+
+  test('preserves enqueue order when timestamps are equal', () async {
+    final boxName = _uniqueBoxName();
+    final sentOrder = <String>[];
+    final fixedNow = DateTime.utc(2026, 2, 19, 16, 0, 0);
+
+    final store = await HiveRelayOutboxStore.open(boxName: boxName);
+    final queue = RelayOutboxQueue(
+      store: store,
+      now: () => fixedNow,
+      sender: ({required ciphertext, required clientMsgId}) async {
+        sentOrder.add(clientMsgId);
+        return RelayPushResult(
+          messageId: 'msg_$clientMsgId',
+          status: 'queued',
+          expiresAt: null,
+        );
+      },
+    );
+
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[1]),
+      clientMsgId: 'z-first',
+    );
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[2]),
+      clientMsgId: 'a-second',
+    );
+
+    final flush = await queue.flushPending(limit: 10);
+    expect(flush.sent, 2);
+    expect(sentOrder, <String>['z-first', 'a-second']);
+
+    await store.close();
+    await Hive.deleteBoxFromDisk(boxName);
+  });
+
+  test('serializes concurrent flushes to avoid duplicate sends', () async {
+    final boxName = _uniqueBoxName();
+    final sentOrder = <String>[];
+    var firstSend = true;
+
+    final store = await HiveRelayOutboxStore.open(boxName: boxName);
+    final queue = RelayOutboxQueue(
+      store: store,
+      sender: ({required ciphertext, required clientMsgId}) async {
+        sentOrder.add(clientMsgId);
+        if (firstSend) {
+          firstSend = false;
+          await Future<void>.delayed(const Duration(milliseconds: 25));
+        }
+        return RelayPushResult(
+          messageId: 'msg_$clientMsgId',
+          status: 'queued',
+          expiresAt: null,
+        );
+      },
+    );
+
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[10]),
+      clientMsgId: 'one',
+    );
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[11]),
+      clientMsgId: 'two',
+    );
+
+    final flushA = queue.flushPending(limit: 1);
+    final flushB = queue.flushPending(limit: 10);
+    final resultA = await flushA;
+    final resultB = await flushB;
+
+    expect(resultA.sent + resultB.sent, 2);
+    expect(sentOrder, <String>['one', 'two']);
+
+    final one = await store.getByClientMsgId('one');
+    final two = await store.getByClientMsgId('two');
+    expect(one?.status, RelayOutboxStatus.sent);
+    expect(two?.status, RelayOutboxStatus.sent);
+    expect(one?.attempts, 1);
+    expect(two?.attempts, 1);
+
+    await store.close();
+    await Hive.deleteBoxFromDisk(boxName);
+  });
+
+  test('failPending marks queued entries as failed', () async {
+    final boxName = _uniqueBoxName();
+
+    final store = await HiveRelayOutboxStore.open(boxName: boxName);
+    final queue = RelayOutboxQueue(
+      store: store,
+      sender: ({required ciphertext, required clientMsgId}) async {
+        fail('sender must not run for failPending');
+      },
+    );
+
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[1]),
+      clientMsgId: 'pending_1',
+    );
+    await queue.enqueue(
+      ciphertext: Uint8List.fromList(<int>[2]),
+      clientMsgId: 'pending_2',
+    );
+
+    final quarantined = await queue.failPending(reason: 'test-quarantine');
+    expect(quarantined, 2);
+
+    final first = await store.getByClientMsgId('pending_1');
+    final second = await store.getByClientMsgId('pending_2');
+    expect(first?.status, RelayOutboxStatus.failed);
+    expect(second?.status, RelayOutboxStatus.failed);
+    expect(first?.lastError, contains('test-quarantine'));
+    expect(second?.lastError, contains('test-quarantine'));
+
+    final flush = await queue.flushPending();
+    expect(flush.processed, 0);
+
+    await store.close();
+    await Hive.deleteBoxFromDisk(boxName);
+  });
 }
 
 String _uniqueBoxName() {

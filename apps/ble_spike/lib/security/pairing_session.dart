@@ -119,6 +119,25 @@ class PairingSession {
     final type = message[1];
     final payload = Uint8List.fromList(message.sublist(2));
 
+    // After a failed run we intentionally drop any further security frames.
+    // This prevents stale hs*/key frames from pushing the state machine into
+    // repeated "unexpected stage" errors before the app triggers a reset/retry.
+    if (stage == PairingStage.failed) {
+      return true;
+    }
+
+    // Ignore stale security frames while idle.
+    // In relay mode, delayed frames from an older run can arrive after reset;
+    // only HS1 is meaningful for a responder in idle.
+    if (stage == PairingStage.idle) {
+      if (role == ChatRole.initiator) {
+        return true;
+      }
+      if (role == ChatRole.responder && type != kSecMsgHs1) {
+        return true;
+      }
+    }
+
     try {
       switch (type) {
         case kSecMsgHs1:

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -25,6 +26,7 @@ class RelayOutboxEntry {
     required this.attempts,
     required this.createdAtMs,
     required this.updatedAtMs,
+    this.enqueueOrder = 0,
     this.sentAtMs,
     this.relayMessageId,
     this.relayExpiresAtMs,
@@ -37,6 +39,7 @@ class RelayOutboxEntry {
   final int attempts;
   final int createdAtMs;
   final int updatedAtMs;
+  final int enqueueOrder;
   final int? sentAtMs;
   final String? relayMessageId;
   final int? relayExpiresAtMs;
@@ -49,6 +52,7 @@ class RelayOutboxEntry {
     int? attempts,
     int? createdAtMs,
     int? updatedAtMs,
+    int? enqueueOrder,
     int? sentAtMs,
     bool clearSentAtMs = false,
     String? relayMessageId,
@@ -65,6 +69,7 @@ class RelayOutboxEntry {
       attempts: attempts ?? this.attempts,
       createdAtMs: createdAtMs ?? this.createdAtMs,
       updatedAtMs: updatedAtMs ?? this.updatedAtMs,
+      enqueueOrder: enqueueOrder ?? this.enqueueOrder,
       sentAtMs: clearSentAtMs ? null : (sentAtMs ?? this.sentAtMs),
       relayMessageId: clearRelayMessageId
           ? null
@@ -95,6 +100,7 @@ class RelayOutboxEntryAdapter extends TypeAdapter<RelayOutboxEntry> {
       attempts: fields[3] as int? ?? 0,
       createdAtMs: fields[4] as int? ?? 0,
       updatedAtMs: fields[5] as int? ?? 0,
+      enqueueOrder: fields[10] as int? ?? 0,
       sentAtMs: fields[6] as int?,
       relayMessageId: fields[7] as String?,
       relayExpiresAtMs: fields[8] as int?,
@@ -105,7 +111,7 @@ class RelayOutboxEntryAdapter extends TypeAdapter<RelayOutboxEntry> {
   @override
   void write(BinaryWriter writer, RelayOutboxEntry obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.clientMsgId)
       ..writeByte(1)
@@ -118,6 +124,8 @@ class RelayOutboxEntryAdapter extends TypeAdapter<RelayOutboxEntry> {
       ..write(obj.createdAtMs)
       ..writeByte(5)
       ..write(obj.updatedAtMs)
+      ..writeByte(10)
+      ..write(obj.enqueueOrder)
       ..writeByte(6)
       ..write(obj.sentAtMs)
       ..writeByte(7)
@@ -138,6 +146,7 @@ void registerRelayOutboxAdapter() {
 abstract class RelayOutboxStore {
   Future<RelayOutboxEntry?> getByClientMsgId(String clientMsgId);
   Future<List<RelayOutboxEntry>> listPending({required int limit});
+  Future<int> failPending({required String error, required int updatedAtMs});
   Future<void> put(RelayOutboxEntry entry);
   Future<void> close();
 }
@@ -171,6 +180,16 @@ class HiveRelayOutboxStore implements RelayOutboxStore {
         .map((entry) => entry.copyWith())
         .toList(growable: false);
     pending.sort((a, b) {
+      final aHasOrder = a.enqueueOrder != 0;
+      final bHasOrder = b.enqueueOrder != 0;
+      if (aHasOrder && bHasOrder) {
+        final byOrder = a.enqueueOrder.compareTo(b.enqueueOrder);
+        if (byOrder != 0) {
+          return byOrder;
+        }
+      } else if (aHasOrder != bHasOrder) {
+        return aHasOrder ? -1 : 1;
+      }
       final byCreated = a.createdAtMs.compareTo(b.createdAtMs);
       if (byCreated != 0) {
         return byCreated;
@@ -181,6 +200,30 @@ class HiveRelayOutboxStore implements RelayOutboxStore {
       return pending;
     }
     return pending.sublist(0, limit);
+  }
+
+  @override
+  Future<int> failPending({
+    required String error,
+    required int updatedAtMs,
+  }) async {
+    var count = 0;
+    for (final key in _box.keys) {
+      final entry = _box.get(key);
+      if (entry == null || entry.status != RelayOutboxStatus.pending) {
+        continue;
+      }
+      await _box.put(
+        key,
+        entry.copyWith(
+          status: RelayOutboxStatus.failed,
+          updatedAtMs: updatedAtMs,
+          lastError: error,
+        ),
+      );
+      count += 1;
+    }
+    return count;
   }
 
   @override
@@ -229,6 +272,8 @@ class RelayOutboxQueue {
   final RelayOutboxSender _sender;
   final DateTime Function() _now;
   final Random _random;
+  int _enqueueOrderCounter = 0;
+  Future<void> _flushMutex = Future<void>.value();
 
   Future<RelayOutboxEntry> enqueue({
     required Uint8List ciphertext,
@@ -259,12 +304,30 @@ class RelayOutboxQueue {
       attempts: 0,
       createdAtMs: nowMs,
       updatedAtMs: nowMs,
+      enqueueOrder: _nextEnqueueOrder(nowMs),
     );
     await _store.put(entry);
     return entry;
   }
 
+  Future<RelayOutboxEntry?> getByClientMsgId(String clientMsgId) {
+    return _store.getByClientMsgId(clientMsgId);
+  }
+
   Future<RelayOutboxFlushResult> flushPending({int limit = 50}) async {
+    final completer = Completer<RelayOutboxFlushResult>();
+    _flushMutex = _flushMutex.catchError((_) {}).then((_) async {
+      try {
+        final result = await _flushPendingInternal(limit: limit);
+        completer.complete(result);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+
+  Future<RelayOutboxFlushResult> _flushPendingInternal({int limit = 50}) async {
     if (limit < 1) {
       throw ArgumentError.value(limit, 'limit', 'must be >= 1');
     }
@@ -322,6 +385,21 @@ class RelayOutboxQueue {
       retryScheduled: retryScheduled,
       failed: failed,
     );
+  }
+
+  Future<int> failPending({required String reason}) {
+    final nowMs = _now().millisecondsSinceEpoch;
+    return _store.failPending(error: reason, updatedAtMs: nowMs);
+  }
+
+  int _nextEnqueueOrder(int nowMs) {
+    final base = nowMs * 1000;
+    if (_enqueueOrderCounter < base) {
+      _enqueueOrderCounter = base;
+    } else {
+      _enqueueOrderCounter += 1;
+    }
+    return _enqueueOrderCounter;
   }
 
   String _newClientMsgId() {
