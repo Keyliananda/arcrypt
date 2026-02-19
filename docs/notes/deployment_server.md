@@ -162,3 +162,11 @@ chmod 700 /home/<user>/deploy/prsm/server
 chmod 600 /home/<user>/deploy/prsm/server/.env
 chmod 600 /home/<user>/deploy/prsm/server/data.sqlite
 ```
+
+## 10) Ops-Hardening nach Live-Fix
+
+Fuer die Entschaerfung von Rest-Risiken (PHP-Proxy entfernen, systemd fuer Node, Monitoring, Legacy-Pfade aufraeumen):
+
+- `docs/notes/relay_ops_hardening.md`
+- `server/deploy/nginx/arcrypt.pisspeter.de.conf`
+- `server/deploy/systemd/prsm-relay.service`

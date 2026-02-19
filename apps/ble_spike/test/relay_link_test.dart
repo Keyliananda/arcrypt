@@ -84,6 +84,132 @@ void main() {
     expect(result.expiresAt, DateTime.parse('2026-02-10T12:00:00Z'));
   });
 
+  test(
+    'push does not retry immediately on relay rate limit responses',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      var attempts = 0;
+
+      unawaited(
+        server.listen((request) async {
+          attempts++;
+          request.response.statusCode = 429;
+          request.response.write('{"ok":false,"error":"rate_limit"}');
+          await request.response.close();
+        }).asFuture<void>(),
+      );
+
+      final client = RelayMailboxHttpClient(
+        config: RelayLinkConfig(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+          requestTimeout: const Duration(seconds: 2),
+          maxRetries: 5,
+          initialBackoff: const Duration(milliseconds: 5),
+          maxBackoff: const Duration(milliseconds: 10),
+          jitterFactor: 0,
+          random: Random(8),
+          now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+        ),
+      );
+      addTearDown(() => client.close(force: true));
+
+      await expectLater(
+        () => client.push(
+          mailboxId: 'bWFpbGJveC1pZC0xMjM0NTY3ODkw',
+          ciphertext: Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+        throwsA(
+          isA<RelayLinkException>()
+              .having((e) => e.statusCode, 'statusCode', 429)
+              .having((e) => e.errorCode, 'errorCode', 'rate_limit')
+              .having((e) => e.retryable, 'retryable', isTrue),
+        ),
+      );
+
+      expect(attempts, 1);
+    },
+  );
+
+  test(
+    'polling loop applies slower retry cadence after rate_limit errors',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+
+      var pullCount = 0;
+      final firstPull = Completer<void>();
+
+      unawaited(
+        server.listen((request) async {
+          if (request.uri.path != '/v1/mailbox/pull') {
+            request.response.statusCode = 404;
+            request.response.write('{"ok":false,"error":"not_found"}');
+            await request.response.close();
+            return;
+          }
+          pullCount++;
+          if (!firstPull.isCompleted) {
+            firstPull.complete();
+          }
+          request.response.statusCode = 429;
+          request.response.write('{"ok":false,"error":"rate_limit"}');
+          await request.response.close();
+        }).asFuture<void>(),
+      );
+
+      final client = RelayMailboxHttpClient(
+        config: RelayLinkConfig(
+          baseUri: Uri.parse('http://127.0.0.1:${server.port}'),
+          requestTimeout: const Duration(seconds: 2),
+          maxRetries: 2,
+          initialBackoff: const Duration(milliseconds: 5),
+          maxBackoff: const Duration(milliseconds: 10),
+          jitterFactor: 0,
+          random: Random(9),
+          now: () => DateTime.utc(2026, 2, 9, 12, 0, 0),
+        ),
+      );
+      addTearDown(() => client.close(force: true));
+
+      final relayLink = RelayLink(
+        client: client,
+        outboundMailboxId: 'b3V0Ym91bmQtbWFpbGJveC0xMjM0NTY3ODkw',
+        inboundMailboxId: 'aW5ib3VuZC1tYWlsYm94LTEyMzQ1Njc4OTA',
+        defaultAutoAck: true,
+      );
+      final poller = RelayPollingLoop(
+        link: relayLink,
+        config: const RelayPollingConfig(
+          interval: Duration(milliseconds: 5),
+          jitterFactor: 0,
+          pollImmediately: true,
+          maxBurstPerTick: 1,
+          errorRetryDelay: Duration(milliseconds: 5),
+          errorRetryMaxDelay: Duration(milliseconds: 20),
+          rateLimitRetryDelay: Duration(milliseconds: 80),
+        ),
+        random: Random(10),
+      );
+      addTearDown(() => poller.stop());
+
+      poller.start();
+      await firstPull.future.timeout(const Duration(seconds: 1));
+
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      expect(
+        pullCount,
+        1,
+        reason: 'rate-limit backoff should prevent immediate follow-up polling',
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      expect(pullCount, greaterThanOrEqualTo(2));
+      await poller.stop();
+    },
+  );
+
   test('wake retries once and sends valid proof', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     addTearDown(() => server.close(force: true));

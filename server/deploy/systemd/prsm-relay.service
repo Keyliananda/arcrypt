@@ -1,0 +1,25 @@
+[Unit]
+Description=PRSM Relay Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<DEPLOY_USER>
+Group=<DEPLOY_USER>
+WorkingDirectory=/home/<DEPLOY_USER>/deploy/prsm/server
+Environment=NODE_ENV=production
+EnvironmentFile=/home/<DEPLOY_USER>/deploy/prsm/server/.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prsm-relay
+
+[Install]
+WantedBy=multi-user.target

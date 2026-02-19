@@ -138,6 +138,8 @@ class RelayPollingConfig {
     this.pollImmediately = true,
     this.maxBurstPerTick = 4,
     this.errorRetryDelay = const Duration(seconds: 2),
+    this.errorRetryMaxDelay = const Duration(seconds: 30),
+    this.rateLimitRetryDelay = const Duration(seconds: 12),
     this.wakeFollowUpEnabled = true,
     this.wakeFollowUpMinDelay = const Duration(seconds: 2),
     this.wakeFollowUpMaxDelay = const Duration(seconds: 5),
@@ -148,10 +150,14 @@ class RelayPollingConfig {
   final bool pollImmediately;
   final int maxBurstPerTick;
   final Duration errorRetryDelay;
+  final Duration errorRetryMaxDelay;
+  final Duration rateLimitRetryDelay;
   final bool wakeFollowUpEnabled;
   final Duration wakeFollowUpMinDelay;
   final Duration wakeFollowUpMaxDelay;
 }
+
+enum _RelayPollCycleOutcome { success, retryableError, rateLimited }
 
 class RelayPollingLoop {
   RelayPollingLoop({
@@ -182,6 +188,7 @@ class RelayPollingLoop {
   Timer? _wakeFollowUpTimer;
   Future<void>? _activeCycle;
   bool _immediateCycleRequested = false;
+  int _consecutiveErrorCount = 0;
 
   bool get isRunning => _running;
 
@@ -200,6 +207,27 @@ class RelayPollingLoop {
       throw ArgumentError.value(
         config.errorRetryDelay,
         'config.errorRetryDelay',
+        'must be >= 0',
+      );
+    }
+    if (config.errorRetryMaxDelay.isNegative) {
+      throw ArgumentError.value(
+        config.errorRetryMaxDelay,
+        'config.errorRetryMaxDelay',
+        'must be >= 0',
+      );
+    }
+    if (config.errorRetryMaxDelay < config.errorRetryDelay) {
+      throw ArgumentError.value(
+        config.errorRetryMaxDelay,
+        'config.errorRetryMaxDelay',
+        'must be >= config.errorRetryDelay',
+      );
+    }
+    if (config.rateLimitRetryDelay.isNegative) {
+      throw ArgumentError.value(
+        config.rateLimitRetryDelay,
+        'config.rateLimitRetryDelay',
         'must be >= 0',
       );
     }
@@ -240,7 +268,8 @@ class RelayPollingLoop {
     }
     _running = true;
     _cursor = cursor;
-    _scheduleNext(initial: true, hadError: false);
+    _consecutiveErrorCount = 0;
+    _scheduleNext(initial: true, outcome: _RelayPollCycleOutcome.success);
   }
 
   Future<void> stop() async {
@@ -282,13 +311,25 @@ class RelayPollingLoop {
     });
   }
 
-  void _scheduleNext({required bool initial, required bool hadError}) {
+  void _scheduleNext({
+    required bool initial,
+    required _RelayPollCycleOutcome outcome,
+    Duration? rateLimitOverrideDelay,
+  }) {
     if (!_running) {
       return;
     }
-    final baseDelay = hadError
-        ? config.errorRetryDelay
-        : (initial && config.pollImmediately ? Duration.zero : config.interval);
+    var baseDelay = switch (outcome) {
+      _RelayPollCycleOutcome.success =>
+        initial && config.pollImmediately ? Duration.zero : config.interval,
+      _RelayPollCycleOutcome.retryableError => _computeErrorRetryDelay(),
+      _RelayPollCycleOutcome.rateLimited => _computeRateLimitRetryDelay(
+        overrideDelay: rateLimitOverrideDelay,
+      ),
+    };
+    if (baseDelay.isNegative) {
+      baseDelay = Duration.zero;
+    }
     final delay = computeJitteredInterval(
       baseInterval: baseDelay,
       jitterFactor: config.jitterFactor,
@@ -304,7 +345,8 @@ class RelayPollingLoop {
       return;
     }
 
-    var hadError = false;
+    var outcome = _RelayPollCycleOutcome.success;
+    Duration? rateLimitOverrideDelay;
     final cycle = () async {
       var polls = 0;
       while (_running && polls < config.maxBurstPerTick) {
@@ -325,8 +367,13 @@ class RelayPollingLoop {
     _activeCycle = cycle;
     try {
       await cycle;
+      _consecutiveErrorCount = 0;
     } catch (error, stackTrace) {
-      hadError = true;
+      _consecutiveErrorCount++;
+      outcome = _classifyCycleOutcome(error);
+      if (outcome == _RelayPollCycleOutcome.rateLimited) {
+        rateLimitOverrideDelay = _extractRateLimitDelay(error);
+      }
       _log('poll cycle failed: $error');
       onError?.call(error, stackTrace);
     } finally {
@@ -336,8 +383,84 @@ class RelayPollingLoop {
         unawaited(_runCycle());
         return;
       }
-      _scheduleNext(initial: false, hadError: hadError);
+      _scheduleNext(
+        initial: false,
+        outcome: outcome,
+        rateLimitOverrideDelay: rateLimitOverrideDelay,
+      );
     }
+  }
+
+  _RelayPollCycleOutcome _classifyCycleOutcome(Object error) {
+    if (error is RelayLinkException) {
+      if (error.statusCode == 429 || error.errorCode == 'rate_limit') {
+        return _RelayPollCycleOutcome.rateLimited;
+      }
+    }
+    return _RelayPollCycleOutcome.retryableError;
+  }
+
+  Duration _computeErrorRetryDelay() {
+    if (config.errorRetryDelay <= Duration.zero) {
+      return Duration.zero;
+    }
+    final exponent = (_consecutiveErrorCount - 1).clamp(0, 16);
+    var backoffMs = config.errorRetryDelay.inMilliseconds * (1 << exponent);
+    final maxMs = config.errorRetryMaxDelay.inMilliseconds;
+    if (backoffMs > maxMs) {
+      backoffMs = maxMs;
+    }
+    return Duration(milliseconds: backoffMs);
+  }
+
+  Duration _computeRateLimitRetryDelay({Duration? overrideDelay}) {
+    var delay = config.rateLimitRetryDelay;
+    final errorBackoffDelay = _computeErrorRetryDelay();
+    if (errorBackoffDelay > delay) {
+      delay = errorBackoffDelay;
+    }
+    if (overrideDelay != null && overrideDelay > delay) {
+      delay = overrideDelay;
+    }
+    return delay;
+  }
+
+  Duration? _extractRateLimitDelay(Object error) {
+    if (error is! RelayLinkException) {
+      return null;
+    }
+    final details = error.details;
+    if (details == null) {
+      return null;
+    }
+    final msValue = _parsePositiveInt(details['retry_after_ms']);
+    if (msValue != null) {
+      return Duration(milliseconds: msValue);
+    }
+    final secValue = _parsePositiveInt(
+      details['retry_after_sec'] ?? details['retry_after'],
+    );
+    if (secValue != null) {
+      return Duration(seconds: secValue);
+    }
+    return null;
+  }
+
+  int? _parsePositiveInt(Object? value) {
+    if (value is int) {
+      return value > 0 ? value : null;
+    }
+    if (value is num) {
+      final converted = value.round();
+      return converted > 0 ? converted : null;
+    }
+    if (value is String) {
+      final converted = int.tryParse(value.trim());
+      if (converted != null && converted > 0) {
+        return converted;
+      }
+    }
+    return null;
   }
 
   Duration _computeWakeFollowUpDelay() {
@@ -549,6 +672,15 @@ class RelayMailboxHttpClient {
         }
 
         final errorCode = _readOptionalString(response.json['error']);
+        if (response.statusCode == 429) {
+          throw RelayLinkException(
+            'relay request failed',
+            statusCode: response.statusCode,
+            errorCode: errorCode,
+            details: _readOptionalMap(response.json['details']),
+            retryable: true,
+          );
+        }
         final retryable = _isRetryableStatus(response.statusCode);
         if (!retryable || attempt > _config.maxRetries) {
           throw RelayLinkException(
