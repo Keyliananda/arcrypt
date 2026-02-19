@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import 'transport/relay_config_store.dart';
+import 'transport/relay_link.dart';
 import 'transport/relay_runtime_config.dart';
 
 class RelayConfigScreen extends StatefulWidget {
@@ -82,6 +85,14 @@ class _RelayConfigScreenState extends State<RelayConfigScreen> {
       });
       return;
     }
+    if (config.inboundMailboxId.trim() == config.outboundMailboxId.trim()) {
+      setState(() {
+        _statusIsError = true;
+        _status =
+            'Inbound/Outbound Mailbox duerfen nicht identisch sein (pro Geraet invertiert konfigurieren).';
+      });
+      return;
+    }
 
     setState(() {
       _busy = true;
@@ -129,6 +140,23 @@ class _RelayConfigScreenState extends State<RelayConfigScreen> {
       });
       return;
     }
+    final inboundMailboxId = config.inboundMailboxId.trim();
+    final outboundMailboxId = config.outboundMailboxId.trim();
+    if (inboundMailboxId.isEmpty || outboundMailboxId.isEmpty) {
+      setState(() {
+        _statusIsError = true;
+        _status = 'Inbound/Outbound Mailbox ID fehlen.';
+      });
+      return;
+    }
+    if (inboundMailboxId == outboundMailboxId) {
+      setState(() {
+        _statusIsError = true;
+        _status =
+            'Inbound/Outbound Mailbox duerfen nicht identisch sein (pro Geraet invertiert konfigurieren).';
+      });
+      return;
+    }
 
     setState(() {
       _busy = true;
@@ -145,17 +173,54 @@ class _RelayConfigScreenState extends State<RelayConfigScreen> {
         request.write(jsonEncode(<String, String>{}));
         final response = await request.close();
         final ok = response.statusCode >= 200 && response.statusCode < 300;
-        if (!mounted) return;
-        setState(() {
-          _busy = false;
-          _statusIsError = !ok;
-          _status = ok
-              ? 'Relay erreichbar (HTTP ${response.statusCode}).'
-              : 'Relay antwortet, aber mit HTTP ${response.statusCode}.';
-        });
+        if (!ok) {
+          if (!mounted) return;
+          setState(() {
+            _busy = false;
+            _statusIsError = true;
+            _status = 'Relay antwortet, aber mit HTTP ${response.statusCode}.';
+          });
+          return;
+        }
       } finally {
         client.close(force: true);
       }
+
+      final mailboxClient = RelayMailboxHttpClient(
+        config: RelayLinkConfig(
+          baseUri: baseUri,
+          requestTimeout: const Duration(seconds: 6),
+          maxRetries: 2,
+        ),
+      );
+      try {
+        await _runMailboxSelfTest(
+          client: mailboxClient,
+          mailboxId: outboundMailboxId,
+          label: 'outbound',
+        );
+        await _runMailboxSelfTest(
+          client: mailboxClient,
+          mailboxId: inboundMailboxId,
+          label: 'inbound',
+        );
+        if (!mounted) return;
+        setState(() {
+          _busy = false;
+          _statusIsError = false;
+          _status =
+              'Relay erreichbar und Mailbox-Test (push/pull/ack) erfolgreich.';
+        });
+      } finally {
+        mailboxClient.close(force: true);
+      }
+    } on RelayLinkException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _statusIsError = true;
+        _status = 'Relay-Mailbox-Test fehlgeschlagen: $e';
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -164,6 +229,43 @@ class _RelayConfigScreenState extends State<RelayConfigScreen> {
         _status = 'Relay-Test fehlgeschlagen: $e';
       });
     }
+  }
+
+  Future<void> _runMailboxSelfTest({
+    required RelayMailboxHttpClient client,
+    required String mailboxId,
+    required String label,
+  }) async {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final suffix = Random.secure().nextInt(1 << 20).toRadixString(16);
+    final probeId = 'cfg-$label-$nowMs-$suffix';
+    final payload = Uint8List.fromList(utf8.encode('relay-selftest:$probeId'));
+    final pushed = await client.push(
+      mailboxId: mailboxId,
+      ciphertext: payload,
+      clientMsgId: probeId,
+      expiresInSec: 120,
+    );
+
+    var found = false;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final pulled = await client.pull(mailboxId: mailboxId, limit: 20);
+      found = pulled.messages.any((m) => m.messageId == pushed.messageId);
+      if (found) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    if (!found) {
+      throw StateError(
+        'Mailbox-Test ($label) konnte gepushte Nachricht nicht lesen (moeglicher Consumer-Konflikt).',
+      );
+    }
+
+    await client.ack(
+      mailboxId: mailboxId,
+      messageIds: <String>[pushed.messageId],
+    );
   }
 
   @override

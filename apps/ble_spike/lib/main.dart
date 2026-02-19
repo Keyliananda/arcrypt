@@ -422,6 +422,33 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const TransportConfig _blePreferredTransportConfig = TransportConfig(
+    maxPayload: kMaxPayloadSize,
+    ackTimeout: Duration(milliseconds: 500),
+    maxRetries: 10,
+  );
+  static const TransportConfig _relayPreferredTransportConfig = TransportConfig(
+    maxPayload: kMaxPayloadSize,
+    ackTimeout: Duration(seconds: 6),
+    maxRetries: 8,
+  );
+  static const Duration _pairingRecoveryDelay = Duration(milliseconds: 1200);
+  static const Duration _pairingStageTimeoutBle = Duration(seconds: 18);
+  static const Duration _pairingStageTimeoutRelay = Duration(seconds: 75);
+  static const RelayPollingConfig _relayPollingConfig = RelayPollingConfig(
+    interval: Duration(seconds: 2),
+    jitterFactor: 0.15,
+    pollImmediately: true,
+    maxBurstPerTick: 6,
+    errorRetryDelay: Duration(milliseconds: 800),
+    errorRetryMaxDelay: Duration(seconds: 10),
+    rateLimitRetryDelay: Duration(seconds: 6),
+    wakeFollowUpEnabled: true,
+    wakeFollowUpMinDelay: Duration(milliseconds: 600),
+    wakeFollowUpMaxDelay: Duration(seconds: 2),
+  );
+  static const int _maxPairingRecoveryAttempts = 2;
+
   final TextEditingController _messageController = TextEditingController();
   final List<String> _log = [];
   final List<ChatMessage> _messages = [];
@@ -447,6 +474,9 @@ class _ChatScreenState extends State<ChatScreen> {
   RelayOutboxQueue? _relayOutboxQueue;
   final List<Uint8List> _pendingTransportPackets = [];
   bool _relayOutboxFlushInFlight = false;
+  Timer? _pairingRecoveryTimer;
+  Timer? _pairingProgressTimer;
+  int _pairingRecoveryAttempts = 0;
 
   // Chat session
   ChatSession? _chatSession;
@@ -500,6 +530,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _ensureTransport();
             _startPairingIfPossible(reason: 'ble-connected');
           } else {
+            _cancelPairingRecovery(resetAttempts: true);
+            _clearPairingProgressWatchdog();
             if (_relayLink == null) {
               _transport?.resetSession();
               _pairing?.reset();
@@ -548,6 +580,8 @@ class _ChatScreenState extends State<ChatScreen> {
             _ensureTransport();
             _startPairingIfPossible(reason: 'ble-connected');
           } else {
+            _cancelPairingRecovery(resetAttempts: true);
+            _clearPairingProgressWatchdog();
             if (_relayLink == null) {
               _transport?.resetSession();
               _pairing?.reset();
@@ -596,16 +630,21 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     _logLine('Richte Transport ein...');
+    final relayOnlyPath = _relayOutboxQueue != null && !_isConnected;
+    final transportConfig = relayOnlyPath
+        ? _relayPreferredTransportConfig
+        : _blePreferredTransportConfig;
+    if (relayOnlyPath) {
+      _logLine(
+        'Transport-Konfig: Relay-only (ack=${transportConfig.ackTimeout.inMilliseconds}ms, retries=${transportConfig.maxRetries})',
+      );
+    }
 
     final link = _buildHybridTransportLink();
     _transport = TransportEndpoint(
       name: widget.role.name,
       link: link,
-      config: const TransportConfig(
-        maxPayload: kMaxPayloadSize,
-        ackTimeout: Duration(milliseconds: 500),
-        maxRetries: 10,
-      ),
+      config: transportConfig,
       logger: _logLine,
     );
 
@@ -644,14 +683,22 @@ class _ChatScreenState extends State<ChatScreen> {
       onUpdate: () {
         if (!mounted) return;
         final pairing = _pairing;
+        final stage = pairing?.stage;
+        final error = pairing?.error;
+        _updatePairingProgressWatchdog(pairing);
+        if (stage == PairingStage.failed) {
+          _schedulePairingRecoveryIfTransient(error);
+        } else if (stage == PairingStage.established) {
+          _cancelPairingRecovery(resetAttempts: true);
+        }
         setState(() {
-          if (pairing?.stage == PairingStage.failed) {
-            _statusError = _statusErrorFromPairing(pairing?.error);
-          } else if (pairing?.stage == PairingStage.established) {
+          if (stage == PairingStage.failed) {
+            _statusError = _statusErrorFromPairing(error);
+          } else if (stage == PairingStage.established) {
             _statusError = null;
           }
         });
-        if (pairing?.stage == PairingStage.established) {
+        if (stage == PairingStage.established) {
           unawaited(_finalizeChatSessionFromPairing());
         }
       },
@@ -664,6 +711,63 @@ class _ChatScreenState extends State<ChatScreen> {
 
   bool _hasActiveTransportPathForInitiator() {
     return _isConnected || _relayOutboxQueue != null;
+  }
+
+  bool _hasAnyTransportPath() {
+    return _isConnected || _relayOutboxQueue != null;
+  }
+
+  Duration? _pairingTimeoutForStage(PairingStage stage) {
+    switch (stage) {
+      case PairingStage.handshaking:
+      case PairingStage.waitingMasterKey:
+      case PairingStage.waitingMasterKeyAck:
+      case PairingStage.waitingMasterKeyCommit:
+        return _isRelayOnlyPathActive()
+            ? _pairingStageTimeoutRelay
+            : _pairingStageTimeoutBle;
+      case PairingStage.idle:
+      case PairingStage.sasReady:
+      case PairingStage.waitingPeerSas:
+      case PairingStage.established:
+      case PairingStage.failed:
+        return null;
+    }
+  }
+
+  bool _isRelayOnlyPathActive() {
+    return _relayOutboxQueue != null && !_isConnected;
+  }
+
+  void _clearPairingProgressWatchdog() {
+    _pairingProgressTimer?.cancel();
+    _pairingProgressTimer = null;
+  }
+
+  void _updatePairingProgressWatchdog(PairingSession? pairing) {
+    final stage = pairing?.stage;
+    if (stage == null) {
+      _clearPairingProgressWatchdog();
+      return;
+    }
+    final timeout = _pairingTimeoutForStage(stage);
+    if (timeout == null) {
+      _clearPairingProgressWatchdog();
+      return;
+    }
+
+    _pairingProgressTimer?.cancel();
+    _pairingProgressTimer = Timer(timeout, () {
+      if (!mounted) {
+        return;
+      }
+      final active = _pairing;
+      if (active == null || active != pairing || active.stage != stage) {
+        return;
+      }
+      _logLine('Pairing Timeout in Stage $stage');
+      unawaited(_startPairingRecoveryNow(reason: 'stage-timeout-$stage'));
+    });
   }
 
   void _startPairingIfPossible({required String reason}) {
@@ -683,6 +787,113 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     _logLine('Starte Pairing ($reason)...');
     unawaited(pairing.startIfInitiator());
+  }
+
+  bool _isTransientPairingFailure(String? error) {
+    if (error == null || error.isEmpty) {
+      return false;
+    }
+    final normalized = error.toLowerCase();
+    return normalized.contains('ack timeout') ||
+        normalized.contains('retryable=true') ||
+        normalized.contains('relay send ausstehend') ||
+        normalized.contains('unexpected stage') ||
+        normalized.contains('without responder state') ||
+        normalized.contains('without initiator state') ||
+        normalized.contains('secretboxauthenticationerror') ||
+        normalized.contains('wrong message authentication code');
+  }
+
+  void _cancelPairingRecovery({required bool resetAttempts}) {
+    _pairingRecoveryTimer?.cancel();
+    _pairingRecoveryTimer = null;
+    if (resetAttempts) {
+      _pairingRecoveryAttempts = 0;
+    }
+  }
+
+  void _schedulePairingRecoveryIfTransient(String? error) {
+    if (!_isTransientPairingFailure(error)) {
+      return;
+    }
+    if (_pairingRecoveryAttempts >= _maxPairingRecoveryAttempts) {
+      _logLine(
+        'Pairing Auto-Recovery: Retry-Limit erreicht (${_maxPairingRecoveryAttempts})',
+      );
+      return;
+    }
+    if (_pairingRecoveryTimer != null) {
+      return;
+    }
+    if (!_hasAnyTransportPath()) {
+      _logLine('Pairing Auto-Recovery: kein aktiver Transportpfad');
+      return;
+    }
+
+    final attempt = _pairingRecoveryAttempts + 1;
+    _logLine(
+      'Pairing Auto-Recovery geplant ($attempt/$_maxPairingRecoveryAttempts) wegen transientem Fehler',
+    );
+    _pairingRecoveryTimer = Timer(_pairingRecoveryDelay, () {
+      unawaited(_runPairingRecovery(error: error ?? 'unknown'));
+    });
+  }
+
+  Future<void> _startPairingRecoveryNow({required String reason}) async {
+    if (!_hasAnyTransportPath()) {
+      _logLine('Pairing Auto-Recovery abgebrochen: kein aktiver Transportpfad');
+      return;
+    }
+    if (_pairingRecoveryAttempts >= _maxPairingRecoveryAttempts) {
+      _logLine(
+        'Pairing Auto-Recovery: Retry-Limit erreicht (${_maxPairingRecoveryAttempts})',
+      );
+      return;
+    }
+
+    _cancelPairingRecovery(resetAttempts: false);
+    _clearPairingProgressWatchdog();
+    _pairingRecoveryAttempts += 1;
+    final attempt = _pairingRecoveryAttempts;
+    await _quarantinePendingRelayOutbox(reason: reason);
+    _logLine(
+      'Pairing Auto-Recovery startet ($attempt/$_maxPairingRecoveryAttempts): $reason',
+    );
+    _transport?.resetSession();
+    _pairing?.reset();
+    _chatSession = null;
+    _setStatusError(
+      'Pairing Wiederholungsversuch $attempt/$_maxPairingRecoveryAttempts',
+    );
+    _startPairingIfPossible(reason: 'auto-recovery-$attempt');
+    unawaited(_flushRelayOutbox(reason: 'pairing-auto-recovery-$attempt'));
+  }
+
+  Future<void> _runPairingRecovery({required String error}) async {
+    _pairingRecoveryTimer = null;
+    if (!mounted) {
+      return;
+    }
+    final pairing = _pairing;
+    if (pairing == null || pairing.stage != PairingStage.failed) {
+      return;
+    }
+    await _startPairingRecoveryNow(reason: error);
+  }
+
+  Future<void> _quarantinePendingRelayOutbox({required String reason}) async {
+    final outbox = _relayOutboxQueue;
+    if (outbox == null) {
+      return;
+    }
+    final quarantined = await outbox.failPending(
+      reason: 'pairing-recovery:$reason',
+    );
+    if (quarantined > 0) {
+      _logLine(
+        'Relay Outbox: $quarantined pending Frames vor Recovery verworfen',
+      );
+    }
   }
 
   TransportLink _buildHybridTransportLink() {
@@ -809,6 +1020,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       _relayPollingLoop = RelayPollingLoop(
         link: _relayLink!,
+        config: _relayPollingConfig,
         onPoll: (result) {
           final pulledCount = result.pull.messages.length;
           if (pulledCount > 0 || result.pull.hasMore) {
@@ -1119,6 +1331,8 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     // For peripheral, we can't force disconnect in MVP
 
+    _cancelPairingRecovery(resetAttempts: true);
+    _clearPairingProgressWatchdog();
     _transport?.resetSession();
     _pairing?.reset();
     _chatSession = null;
@@ -1271,6 +1485,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _cancelPairingRecovery(resetAttempts: true);
+    _clearPairingProgressWatchdog();
     _inboundSub?.cancel();
     _connectionSub?.cancel();
     _advertisingSub?.cancel();
@@ -1891,11 +2107,29 @@ class _HybridTransportLink implements TransportLink {
     if (outbox != null) {
       final entry = await outbox.enqueue(ciphertext: bytes);
       final flush = await outbox.flushPending(limit: 1);
-      if (flush.sent > 0 || flush.retryScheduled > 0) {
+      if (flush.sent > 0) {
         return;
       }
+
+      if (flush.retryScheduled > 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+        final retryFlush = await outbox.flushPending(limit: 1);
+        if (retryFlush.sent > 0) {
+          return;
+        }
+      }
+
+      final latest = await outbox.getByClientMsgId(entry.clientMsgId);
+      final details = latest?.lastError;
+      if (latest?.status == RelayOutboxStatus.pending) {
+        throw StateError(
+          'Relay send ausstehend (clientMsgId=${entry.clientMsgId})',
+        );
+      }
       throw StateError(
-        'Relay send fehlgeschlagen (clientMsgId=${entry.clientMsgId})',
+        details == null || details.isEmpty
+            ? 'Relay send fehlgeschlagen (clientMsgId=${entry.clientMsgId})'
+            : 'Relay send fehlgeschlagen (clientMsgId=${entry.clientMsgId}): $details',
       );
     }
 
