@@ -174,7 +174,7 @@ class ChatStorage implements PairingStorage {
   @override
   Future<Contact> upsertTrustedContactFromStaticPubkey({
     required Uint8List peerStaticPubkeyX25519,
-    String? nickname,
+    String? displayName,
     int? nowMs,
   }) async {
     if (peerStaticPubkeyX25519.length != 32) {
@@ -190,15 +190,17 @@ class ChatStorage implements PairingStorage {
     final existing = box.get(contactId);
     final contact = Contact(
       contactId: contactId,
-      nickname: nickname ?? existing?.nickname ?? 'Peer',
+      displayName: displayName ?? existing?.displayName ?? 'Peer',
+      createdAtMs: existing?.createdAtMs ?? now,
+      lastSeenAtMs: now,
       trusted: true,
       staticPubkey: Uint8List.fromList(peerStaticPubkeyX25519),
       currentKeyId: existing?.currentKeyId ?? '',
-      lastSeenAtMs: now,
       lastRefreshAtMs: existing?.lastRefreshAtMs ?? 0,
       blocked: existing?.blocked ?? false,
       pendingKeyId: existing?.pendingKeyId ?? '',
       note: existing?.note,
+      avatarColor: existing?.avatarColor,
     );
     await box.put(contactId, contact);
     return contact;
@@ -262,17 +264,19 @@ class ChatStorage implements PairingStorage {
 
     final updated = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: contact.currentKeyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: contact.lastRefreshAtMs,
       blocked: contact.blocked,
       pendingKeyId: keyId,
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
     await contactsBox.put(contactId, updated);
     return pending;
@@ -320,17 +324,19 @@ class ChatStorage implements PairingStorage {
 
     final updatedContact = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: keyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: nowMs,
       blocked: contact.blocked,
       pendingKeyId: '',
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
     await contactsBox.put(contactId, updatedContact);
   }
@@ -344,17 +350,19 @@ class ChatStorage implements PairingStorage {
     if (contact == null) return;
     final updated = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: contact.currentKeyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: contact.lastRefreshAtMs,
       blocked: contact.blocked,
       pendingKeyId: contact.pendingKeyId,
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
     await contactsBox.put(contactId, updated);
   }

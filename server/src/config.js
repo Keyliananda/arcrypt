@@ -67,6 +67,10 @@ const config = {
       pushPerIp: toInt(process.env.RELAY_RATE_LIMIT_PUSH_PER_IP, 1200),
       pullPerIp: toInt(process.env.RELAY_RATE_LIMIT_PULL_PER_IP, 1200),
       ackPerIp: toInt(process.env.RELAY_RATE_LIMIT_ACK_PER_IP, 1200)
+    },
+    realtime: {
+      pingIntervalMs: toInt(process.env.RELAY_REALTIME_PING_INTERVAL_MS, 25000),
+      subscribeTimeoutMs: toInt(process.env.RELAY_REALTIME_SUBSCRIBE_TIMEOUT_MS, 10000)
     }
   },
   apns: {

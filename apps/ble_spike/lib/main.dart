@@ -16,11 +16,12 @@ import 'transport/relay_config_store.dart';
 import 'transport/relay_inbox.dart';
 import 'transport/relay_link.dart';
 import 'transport/relay_outbox.dart';
+import 'transport/relay_realtime.dart';
 import 'transport/relay_runtime_config.dart';
 import 'transport/transport.dart';
 import 'security/pairing_session.dart';
 
-const String kAppVersion = '0.702';
+const String kAppVersion = '0.703';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -435,18 +436,13 @@ class _ChatScreenState extends State<ChatScreen> {
   static const Duration _pairingRecoveryDelay = Duration(milliseconds: 1200);
   static const Duration _pairingStageTimeoutBle = Duration(seconds: 18);
   static const Duration _pairingStageTimeoutRelay = Duration(seconds: 75);
-  static const RelayPollingConfig _relayPollingConfig = RelayPollingConfig(
-    interval: Duration(seconds: 2),
-    jitterFactor: 0.15,
-    pollImmediately: true,
-    maxBurstPerTick: 6,
-    errorRetryDelay: Duration(milliseconds: 800),
-    errorRetryMaxDelay: Duration(seconds: 10),
-    rateLimitRetryDelay: Duration(seconds: 6),
-    wakeFollowUpEnabled: true,
-    wakeFollowUpMinDelay: Duration(milliseconds: 600),
-    wakeFollowUpMaxDelay: Duration(seconds: 2),
+  static const Duration _relayRealtimeConnectTimeout = Duration(seconds: 8);
+  static const Duration _relayRealtimeSubscribeTimeout = Duration(seconds: 6);
+  static const Duration _relayRealtimeReconnectInitialDelay = Duration(
+    milliseconds: 500,
   );
+  static const Duration _relayRealtimeReconnectMaxDelay = Duration(seconds: 8);
+  static const double _relayRealtimeJitterFactor = 0.15;
   static const int _maxPairingRecoveryAttempts = 2;
 
   final TextEditingController _messageController = TextEditingController();
@@ -467,13 +463,15 @@ class _ChatScreenState extends State<ChatScreen> {
   RelayMailboxHttpClient? _relayMailboxClient;
   RelayWakeHttpClient? _relayWakeClient;
   RelayLink? _relayLink;
-  RelayPollingLoop? _relayPollingLoop;
+  RelayRealtimeClient? _relayRealtimeClient;
   RelayInboxStore? _relayInboxStore;
   RelayInboxQueue? _relayInboxQueue;
   RelayOutboxStore? _relayOutboxStore;
   RelayOutboxQueue? _relayOutboxQueue;
   final List<Uint8List> _pendingTransportPackets = [];
   bool _relayOutboxFlushInFlight = false;
+  bool _relaySyncInFlight = false;
+  bool _relaySyncQueued = false;
   Timer? _pairingRecoveryTimer;
   Timer? _pairingProgressTimer;
   int _pairingRecoveryAttempts = 0;
@@ -1018,26 +1016,31 @@ class _ChatScreenState extends State<ChatScreen> {
           );
         },
       );
-      _relayPollingLoop = RelayPollingLoop(
-        link: _relayLink!,
-        config: _relayPollingConfig,
-        onPoll: (result) {
-          final pulledCount = result.pull.messages.length;
-          if (pulledCount > 0 || result.pull.hasMore) {
-            _logLine(
-              'Relay poll: pulled=$pulledCount hasMore=${result.pull.hasMore}',
-            );
-          }
-          unawaited(_flushRelayOutbox(reason: 'poll'));
+      _relayRealtimeClient = RelayRealtimeClient(
+        config: RelayRealtimeConfig(
+          baseUri: baseUri,
+          mailboxId: mailboxInbound,
+          connectTimeout: _relayRealtimeConnectTimeout,
+          subscribeTimeout: _relayRealtimeSubscribeTimeout,
+          reconnectInitialDelay: _relayRealtimeReconnectInitialDelay,
+          reconnectMaxDelay: _relayRealtimeReconnectMaxDelay,
+          jitterFactor: _relayRealtimeJitterFactor,
+        ),
+        onReady: () async {
+          _logLine('Relay Realtime verbunden');
+          await _syncRelayInbox(reason: 'realtime-ready');
+        },
+        onUpdate: (update) async {
+          await _syncRelayInbox(reason: update.type);
         },
         onError: (error, _) {
-          _logLine('Relay poll Fehler: $error');
+          _logLine('Relay Realtime Fehler: $error');
         },
         logger: _logLine,
       );
-      _relayPollingLoop!.start();
+      _relayRealtimeClient!.start();
       _logLine(
-        'Relay aktiv: in=$mailboxInbound out=$mailboxOutbound base=${baseUri.host}',
+        'Relay aktiv: in=$mailboxInbound out=$mailboxOutbound base=${baseUri.host} realtime=${baseUri.host}',
       );
       _startPairingIfPossible(reason: 'relay-ready');
       unawaited(_flushRelayOutbox(reason: 'relay-init'));
@@ -1077,11 +1080,49 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> _syncRelayInbox({required String reason}) async {
+    final relayLink = _relayLink;
+    if (relayLink == null) {
+      return;
+    }
+    if (_relaySyncInFlight) {
+      _relaySyncQueued = true;
+      return;
+    }
+
+    _relaySyncInFlight = true;
+    try {
+      RelayPollResult? result;
+      do {
+        _relaySyncQueued = false;
+        do {
+          result = await relayLink.pollOnce();
+          final pulledCount = result.pull.messages.length;
+          if (pulledCount > 0 || result.pull.hasMore) {
+            _logLine(
+              'Relay sync[$reason]: pulled=$pulledCount hasMore=${result.pull.hasMore}',
+            );
+          }
+          await _flushRelayOutbox(reason: reason);
+        } while (result.pull.hasMore);
+        if (_relaySyncQueued) {
+          _logLine(
+            'Relay sync[$reason]: weitere Events waehrend Sync erhalten',
+          );
+        }
+      } while (_relaySyncQueued);
+    } catch (e) {
+      _logLine('Relay Sync Fehler[$reason]: $e');
+    } finally {
+      _relaySyncInFlight = false;
+    }
+  }
+
   Future<void> _disposeRelay() async {
-    final loop = _relayPollingLoop;
-    _relayPollingLoop = null;
-    if (loop != null) {
-      await loop.stop();
+    final realtime = _relayRealtimeClient;
+    _relayRealtimeClient = null;
+    if (realtime != null) {
+      await realtime.stop();
     }
     _relayLink?.close(force: true);
     _relayLink = null;
@@ -1093,6 +1134,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _relayOutboxStore = null;
     _relayInboxQueue = null;
     _relayOutboxQueue = null;
+    _relaySyncInFlight = false;
+    _relaySyncQueued = false;
   }
 
   Future<void> _onTransportMessage(Uint8List data) async {
@@ -1286,7 +1329,7 @@ class _ChatScreenState extends State<ChatScreen> {
               (c) => c.trusted && !c.blocked && (c.staticPubkey?.length == 32),
             )
             .toList()
-          ..sort((a, b) => a.nickname.compareTo(b.nickname));
+          ..sort((a, b) => a.displayName.compareTo(b.displayName));
 
     if (contacts.isEmpty) return null;
 
@@ -1312,11 +1355,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 onPressed: () => Navigator.of(context).pop(
                   _ExpectedPeer(
                     contactId: c.contactId,
-                    nickname: c.nickname,
+                    displayName: c.displayName,
                     staticPubkey32: Uint8List.fromList(c.staticPubkey!),
                   ),
                 ),
-                child: Text('Reconnect: ${c.nickname}'),
+                child: Text('Reconnect: ${c.displayName}'),
               );
             }),
           ],
@@ -2067,12 +2110,12 @@ class _ChatScreenState extends State<ChatScreen> {
 class _ExpectedPeer {
   _ExpectedPeer({
     required this.contactId,
-    required this.nickname,
+    required this.displayName,
     required this.staticPubkey32,
   });
 
   final String contactId;
-  final String nickname;
+  final String displayName;
   final Uint8List staticPubkey32;
 }
 

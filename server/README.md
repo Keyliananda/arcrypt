@@ -1,6 +1,8 @@
 # Silent Wake + Message Relay (Server)
 
-Node server for wake relay (`/v1/wake`) plus message relay v1 mailboxes (`/v1/mailbox/*`), matching `docs/server-roadmap.md` and `docs/roadmap-message-relay-v1.md`.
+Node server for wake relay (`/v1/wake`), message relay v1 mailboxes
+(`/v1/mailbox/*`) and a WebSocket realtime channel
+(`wss://<host>/v1/mailbox/connect`) for inbound mailbox updates.
 
 ## Quick start
 
@@ -31,12 +33,20 @@ Run pending message-relay migrations:
 npm run migrate
 ```
 
-## Deployment (Server)
+## Deployment (Hetzner)
 
 Files not in git that must exist on the server:
 
 - `server/.env` (secrets + config; created manually, not committed)
 - `server/data.sqlite` (SQLite DB file; create on the server or copy if you need to keep data)
+
+Recommended topology on the Hetzner host:
+
+- Node listens only on `127.0.0.1:$PORT`
+- nginx terminates TLS on `443`
+- nginx proxies both HTTP API traffic and WebSocket upgrades to Node
+- clients use one HTTPS base URL; the app derives `wss://.../v1/mailbox/connect`
+  automatically from `PRSM_RELAY_BASE_URL`
 
 Minimal server steps (from the repo root or inside `server/`):
 
@@ -50,6 +60,14 @@ node src/server.js
 ```
 
 Note: `dotenv` is loaded in `src/server.js`, so `.env` is picked up automatically.
+
+Production boot:
+
+```bash
+sudo cp deploy/systemd/prsm-relay.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now prsm-relay.service
+```
 
 ## SQLite smoke test
 
@@ -95,6 +113,8 @@ node --test
 - `RELAY_RATE_LIMIT_PUSH_PER_IP` (default: 1200)
 - `RELAY_RATE_LIMIT_PULL_PER_IP` (default: 1200)
 - `RELAY_RATE_LIMIT_ACK_PER_IP` (default: 1200)
+- `RELAY_REALTIME_PING_INTERVAL_MS` (default: 25000; websocket keepalive ping cadence)
+- `RELAY_REALTIME_SUBSCRIBE_TIMEOUT_MS` (default: 10000; time allowed for first subscribe frame)
 - `APNS_ENABLED` (default: true)
 - `APNS_ENV` (`sandbox` or `prod`)
 - `APNS_KEY_ID` (Key ID from Apple)
@@ -199,6 +219,36 @@ Body:
 
 Response: `200` with `{ ok, acked, unknown, already_acked }`.
 
+### `wss://<host>/v1/mailbox/connect`
+
+After the WebSocket upgrade the client sends exactly one subscribe frame:
+
+```json
+{
+  "type": "subscribe",
+  "mailbox_id": "b64url_mailbox_id",
+  "ts": 1738533200,
+  "nonce": "b64url_nonce_16_bytes_min",
+  "proof": "<hex hmac>"
+}
+```
+
+Realtime proof canonical string:
+
+```
+WS\n/v1/mailbox/connect\n<ts>\n<nonce>\n<body_sha256_hex_without_proof_field>
+```
+
+Server messages:
+
+- `{ "type": "ready", "mailbox_id_hash": "<sha256>" }`
+- `{ "type": "mailbox_update", "mailbox_id_hash": "<sha256>", "message_id": "msg_..." }`
+
+The WebSocket channel replaces periodic client polling. The existing
+`/v1/mailbox/pull` + `/v1/mailbox/ack` endpoints remain the data plane so the
+client can fetch and acknowledge messages only when a realtime update arrives
+or after reconnect.
+
 Mailbox proof canonical string:
 
 ```
@@ -242,11 +292,13 @@ Use cron to run this every 5-15 minutes.
 
 ## TLS-only + HSTS (production)
 
-For production behind nginx:
+For production behind nginx on Hetzner:
 
 - Set `SECURITY_TLS_ONLY=true`
 - Keep `SECURITY_TRUST_PROXY=true`
 - Forward `X-Forwarded-Proto https` from nginx
 - Optionally set `SECURITY_HSTS_ENABLED=true` once HTTPS is stable
 
-This enforces TLS at the app layer and allows adding HSTS centrally.
+This enforces TLS at the app layer and allows adding HSTS centrally. The nginx
+site file under `deploy/nginx/` already includes the required WebSocket upgrade
+headers.

@@ -291,7 +291,7 @@ function applySecurityHeaders(response, headers, config) {
   return result;
 }
 
-function createApp({ store, config, now = Date.now }) {
+function createApp({ store, config, now = Date.now, onRelayMessageStored }) {
   const relayConfig = relayConfigFrom(config);
 
   async function applyRateLimit(scope, key, limit, windowStart) {
@@ -595,6 +595,10 @@ function createApp({ store, config, now = Date.now }) {
       acked_at: null
     });
 
+    if (typeof onRelayMessageStored === "function") {
+      await onRelayMessageStored(stored);
+    }
+
     return jsonResponse(202, {
       ok: true,
       message_id: stored.message_id,
@@ -740,5 +744,13 @@ module.exports = {
   createApp,
   computeHmac,
   computeMailboxProof,
-  hashMailboxProofBody
+  hashMailboxProofBody,
+  readInteger,
+  readMailboxId,
+  readNonce,
+  readString,
+  relayConfigFrom,
+  sha256Hex,
+  timingSafeEqualHex,
+  windowStartDate
 };

@@ -9,7 +9,7 @@ abstract class PairingStorage {
 
   Future<Contact> upsertTrustedContactFromStaticPubkey({
     required Uint8List peerStaticPubkeyX25519,
-    String? nickname,
+    String? displayName,
     int? nowMs,
   });
 

@@ -29,6 +29,10 @@ BLE spike app to validate BLE roles and platform limits for the MVP.
 - Priority order: `stored runtime config` -> `--dart-define` fallback.
 - On first launch (or after reinstall), valid build defaults are bootstrapped into
   secure runtime storage automatically.
+- The app derives the realtime socket automatically from `PRSM_RELAY_BASE_URL`:
+  `https://relay.example` -> `wss://relay.example/v1/mailbox/connect`
+- Inbound relay delivery is event-driven via WebSocket; the app only pulls and
+  acknowledges messages when a realtime update arrives or after reconnect.
 
 Example:
 
@@ -60,6 +64,13 @@ apps/ble_spike/tool/install_dev_android_pair.sh
 ```
 
 It does three things:
-- sets `adb reverse tcp:3000 tcp:3000` on both phones
+- optionally sets `adb reverse tcp:3000 tcp:3000` on both phones for localhost-only dev
 - installs the app on both devices
 - injects `PRSM_DEV_RELAY_*` with a deterministic mailbox pair (swapped per device)
+
+For a remote Hetzner relay:
+
+- set `PRSM_DEV_RELAY_BASE_URL=https://<your-host>`
+- leave `USE_ADB_REVERSE=0`
+- make sure nginx forwards both `/v1/*` and the WebSocket upgrade for
+  `/v1/mailbox/connect`

@@ -64,7 +64,7 @@ class _FakePairingStorage implements PairingStorage {
   @override
   Future<Contact> upsertTrustedContactFromStaticPubkey({
     required Uint8List peerStaticPubkeyX25519,
-    String? nickname,
+    String? displayName,
     int? nowMs,
   }) async {
     final id = await _contactIdFromPubkey(peerStaticPubkeyX25519);
@@ -72,15 +72,17 @@ class _FakePairingStorage implements PairingStorage {
     final existing = _contacts[id];
     final contact = Contact(
       contactId: id,
-      nickname: nickname ?? existing?.nickname ?? 'Peer',
+      displayName: displayName ?? existing?.displayName ?? 'Peer',
+      createdAtMs: existing?.createdAtMs ?? now,
+      lastSeenAtMs: now,
       trusted: true,
       staticPubkey: Uint8List.fromList(peerStaticPubkeyX25519),
       currentKeyId: existing?.currentKeyId ?? '',
-      lastSeenAtMs: now,
       lastRefreshAtMs: existing?.lastRefreshAtMs ?? 0,
       blocked: existing?.blocked ?? false,
       pendingKeyId: existing?.pendingKeyId ?? '',
       note: existing?.note,
+      avatarColor: existing?.avatarColor,
     );
     _contacts[id] = contact;
     return contact;
@@ -108,17 +110,19 @@ class _FakePairingStorage implements PairingStorage {
     _keys[keyId] = pending;
     _contacts[contactId] = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: contact.currentKeyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: contact.lastRefreshAtMs,
       blocked: contact.blocked,
       pendingKeyId: keyId,
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
     return pending;
   }
@@ -155,17 +159,19 @@ class _FakePairingStorage implements PairingStorage {
     }
     _contacts[contactId] = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: keyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: nowMs,
       blocked: contact.blocked,
       pendingKeyId: '',
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
   }
 
@@ -178,17 +184,19 @@ class _FakePairingStorage implements PairingStorage {
     if (contact == null) return;
     _contacts[contactId] = Contact(
       contactId: contact.contactId,
-      nickname: contact.nickname,
+      displayName: contact.displayName,
+      createdAtMs: contact.createdAtMs,
+      lastSeenAtMs: nowMs,
       trusted: contact.trusted,
       staticPubkey: contact.staticPubkey == null
           ? null
           : Uint8List.fromList(contact.staticPubkey!),
       currentKeyId: contact.currentKeyId,
-      lastSeenAtMs: nowMs,
       lastRefreshAtMs: contact.lastRefreshAtMs,
       blocked: contact.blocked,
       pendingKeyId: contact.pendingKeyId,
       note: contact.note,
+      avatarColor: contact.avatarColor,
     );
   }
 }

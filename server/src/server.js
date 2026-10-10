@@ -4,6 +4,7 @@ require("dotenv").config();
 
 const http = require("http");
 const { createApp } = require("./app");
+const { RelayRealtimeHub } = require("./realtime");
 const { createStore } = require("./store");
 const { config } = require("./config");
 
@@ -40,7 +41,17 @@ function getClientIp(req) {
 
 async function startServer() {
   const store = createStore(config.db);
-  const app = createApp({ store, config });
+  let realtimeHub;
+  const app = createApp({
+    store,
+    config,
+    onRelayMessageStored: async (message) => {
+      realtimeHub?.publishMailboxUpdate({
+        mailboxIdHash: message.mailbox_id_hash,
+        messageId: message.message_id
+      });
+    }
+  });
 
   const server = http.createServer(async (req, res) => {
     let body = "";
@@ -70,9 +81,20 @@ async function startServer() {
     res.end(response.body || "");
   });
 
+  realtimeHub = new RelayRealtimeHub({
+    server,
+    store,
+    config,
+    logger: (message) => {
+      process.stdout.write(`${message}\n`);
+    }
+  });
+
   server.listen(config.port, () => {
     process.stdout.write(`Server listening on ${config.port}\n`);
   });
+
+  return { server, realtimeHub };
 }
 
 if (require.main === module) {

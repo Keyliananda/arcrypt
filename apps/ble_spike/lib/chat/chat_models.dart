@@ -47,27 +47,34 @@ class AppMeta {
 class Contact {
   Contact({
     required this.contactId,
-    required this.nickname,
+    required this.displayName,
+    required this.createdAtMs,
+    required this.lastSeenAtMs,
     required this.trusted,
     required this.currentKeyId,
-    required this.lastSeenAtMs,
     required this.lastRefreshAtMs,
     required this.blocked,
     this.pendingKeyId = '',
     this.staticPubkey,
     this.note,
+    this.avatarColor,
   });
 
   final String contactId;
-  final String nickname;
+  final String displayName;
+  final int createdAtMs;
+  final int lastSeenAtMs;
   final bool trusted;
   final Uint8List? staticPubkey;
   final String currentKeyId;
-  final int lastSeenAtMs;
   final int lastRefreshAtMs;
   final bool blocked;
   final String pendingKeyId;
   final String? note;
+  final String? avatarColor;
+
+  // Temporary compatibility alias while legacy callsites are migrated.
+  String get nickname => displayName;
 }
 
 class KeyMaterial {
@@ -200,28 +207,31 @@ class ContactAdapter extends TypeAdapter<Contact> {
     for (var i = 0; i < numOfFields; i++) {
       fields[reader.readByte()] = reader.read();
     }
+    final lastSeenAtMs = fields[5] as int? ?? 0;
     return Contact(
       contactId: fields[0] as String? ?? '',
-      nickname: fields[1] as String? ?? '',
+      displayName: fields[1] as String? ?? '',
+      createdAtMs: fields[10] as int? ?? lastSeenAtMs,
+      lastSeenAtMs: lastSeenAtMs,
       trusted: fields[2] as bool? ?? false,
       staticPubkey: fields[3] as Uint8List?,
       currentKeyId: fields[4] as String? ?? '',
-      lastSeenAtMs: fields[5] as int? ?? 0,
       lastRefreshAtMs: fields[6] as int? ?? 0,
       blocked: fields[7] as bool? ?? false,
       note: fields[8] as String?,
       pendingKeyId: fields[9] as String? ?? '',
+      avatarColor: fields[11] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Contact obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.contactId)
       ..writeByte(1)
-      ..write(obj.nickname)
+      ..write(obj.displayName)
       ..writeByte(2)
       ..write(obj.trusted)
       ..writeByte(3)
@@ -237,7 +247,11 @@ class ContactAdapter extends TypeAdapter<Contact> {
       ..writeByte(8)
       ..write(obj.note)
       ..writeByte(9)
-      ..write(obj.pendingKeyId);
+      ..write(obj.pendingKeyId)
+      ..writeByte(10)
+      ..write(obj.createdAtMs)
+      ..writeByte(11)
+      ..write(obj.avatarColor);
   }
 }
 

@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:ble_spike/transport/relay_inbox.dart';
 import 'package:ble_spike/transport/relay_link.dart';
 import 'package:ble_spike/transport/relay_outbox.dart';
+import 'package:ble_spike/transport/relay_realtime.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
@@ -78,6 +79,72 @@ void main() {
 
       final polledAfterAck = await receiverLink.pollOnce();
       expect(polledAfterAck.pull.messages, isEmpty);
+    },
+  );
+
+  test(
+    'realtime websocket update triggers targeted pull instead of polling loop',
+    () async {
+      if (!nodeAvailable) {
+        return;
+      }
+      final harness = await _LocalRelayServerHarness.start();
+      addTearDown(harness.stop);
+
+      final mailboxId = _validMailboxId(seed: 41);
+      final senderClient = _newRelayClient(baseUri: harness.baseUri);
+      final receiverClient = _newRelayClient(baseUri: harness.baseUri);
+      addTearDown(() => senderClient.close(force: true));
+      addTearDown(() => receiverClient.close(force: true));
+
+      final inboundPayloads = <Uint8List>[];
+      final receiverLink = RelayLink(
+        client: receiverClient,
+        outboundMailboxId: _validMailboxId(seed: 42),
+        inboundMailboxId: mailboxId,
+        onInboundCiphertext: (bytes) {
+          inboundPayloads.add(Uint8List.fromList(bytes));
+        },
+      );
+      final senderLink = RelayLink(
+        client: senderClient,
+        outboundMailboxId: mailboxId,
+        inboundMailboxId: _validMailboxId(seed: 43),
+      );
+
+      final updateSeen = Completer<void>();
+      final realtime = RelayRealtimeClient(
+        config: RelayRealtimeConfig(
+          baseUri: harness.baseUri,
+          mailboxId: mailboxId,
+          connectTimeout: const Duration(seconds: 2),
+          subscribeTimeout: const Duration(seconds: 2),
+          reconnectInitialDelay: const Duration(milliseconds: 100),
+          reconnectMaxDelay: const Duration(milliseconds: 200),
+          jitterFactor: 0,
+        ),
+        onReady: () async {
+          await receiverLink.pollOnce();
+        },
+        onUpdate: (update) async {
+          await receiverLink.pollOnce();
+          if (!updateSeen.isCompleted) {
+            updateSeen.complete();
+          }
+        },
+      );
+      addTearDown(realtime.stop);
+      realtime.start();
+
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await senderLink.pushCiphertext(
+        Uint8List.fromList(<int>[7, 8, 9]),
+        clientMsgId: 'realtime_push_1',
+      );
+
+      await updateSeen.future.timeout(const Duration(seconds: 3));
+      expect(inboundPayloads, hasLength(1));
+      expect(inboundPayloads.single, Uint8List.fromList(<int>[7, 8, 9]));
     },
   );
 

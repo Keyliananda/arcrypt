@@ -2,12 +2,31 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+ROOT_DIR="$(pwd)"
+
+load_env_file() {
+  local env_file="$1"
+  if [[ ! -f "$env_file" ]]; then
+    return
+  fi
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+}
+
+# Load repo env files when variables are not already present in the shell.
+if [[ -z "${PRSM_DEV_RELAY_BASE_URL:-}" && -z "${PRSM_RELAY_BASE_URL:-}" ]]; then
+  load_env_file "$ROOT_DIR/.env"
+  load_env_file "$ROOT_DIR/server/.env"
+fi
 
 DEVICE_A="${DEVICE_A:-PM19765BA13A2302806}"  # ZTE
 DEVICE_B="${DEVICE_B:-S5ME1218P002406}"      # SHIFT
 
-# Server relay URL is mandatory for dual-install unless explicitly using local adb reverse.
-RELAY_BASE_URL="${PRSM_DEV_RELAY_BASE_URL:-${PRSM_RELAY_BASE_URL:-}}"
+# Server relay URL: shell env -> loaded .env -> localhost default.
+DEFAULT_RELAY_BASE_URL="${DEFAULT_RELAY_BASE_URL:-http://127.0.0.1:3000}"
+RELAY_BASE_URL="${PRSM_DEV_RELAY_BASE_URL:-${PRSM_RELAY_BASE_URL:-$DEFAULT_RELAY_BASE_URL}}"
 USE_ADB_REVERSE="${USE_ADB_REVERSE:-0}"
 RELAY_REVERSE_PORT="${RELAY_REVERSE_PORT:-3000}"
 
@@ -16,7 +35,7 @@ MAILBOX_A="${PRSM_DEV_MAILBOX_A:-bWFpbGJveC1pZC0xMjM0NTY3ODkw}"
 MAILBOX_B="${PRSM_DEV_MAILBOX_B:-bWFpbGJveC1pZC0wOTg3NjU0MzIx}"
 
 if [[ -z "$RELAY_BASE_URL" ]]; then
-  echo "ERROR: Set PRSM_DEV_RELAY_BASE_URL (or PRSM_RELAY_BASE_URL) to your relay server URL." >&2
+  echo "ERROR: Set PRSM_DEV_RELAY_BASE_URL (or PRSM_RELAY_BASE_URL) or DEFAULT_RELAY_BASE_URL." >&2
   exit 1
 fi
 
